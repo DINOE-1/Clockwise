@@ -1,0 +1,50 @@
+# --- Gradle ---
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# --- Android ---
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+output-metadata.json
+
+# --- Signing & secrets ---
+*.jks
+*.keystore
+*.p12
+*.pem
+keystore.properties
+secrets.properties
+
+# --- IDE / editor ---
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.vscode/
+.fleet/
+.history/
+.DS_Store
+Thumbs.db
+
+# --- Kotlin ---
+.kotlin/
+
+# --- Agent-local configuration ---
+.commandcode/
+AGENTS.md
+
+# --- Logs & temp files ---
+*.log
+*.hprof
+*.orig
+*.rej

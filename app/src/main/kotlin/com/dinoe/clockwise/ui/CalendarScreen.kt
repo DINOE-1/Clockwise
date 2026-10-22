@@ -1,0 +1,1701 @@
+package com.dinoe.clockwise.ui
+
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.dinoe.clockwise.R
+import com.dinoe.clockwise.data.Event
+import com.dinoe.clockwise.data.MAX_TAGS_PER_ITEM
+import com.dinoe.clockwise.data.RecurrenceRule
+import com.dinoe.clockwise.data.Tag
+import com.dinoe.clockwise.data.recurrenceDates
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+
+private val monthTitleFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy年M月")
+private val dayTitleFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.TAIWAN)
+private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+private val dateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy年M月d日")
+
+// Week starts on Monday, matching the common Taiwanese calendar layout.
+private val weekdayLabels = listOf("一", "二", "三", "四", "五", "六", "日")
+
+@Composable
+fun CalendarScreen(
+    viewModel: CalendarViewModel = viewModel(),
+    pendingEventId: Long? = null,
+    onPendingEventConsumed: () -> Unit = {},
+) {
+    val events by viewModel.allEvents.collectAsStateWithLifecycle()
+    val alarms by viewModel.alarms.collectAsStateWithLifecycle()
+    val allTags by viewModel.allTags.collectAsStateWithLifecycle()
+    val eventTagMap by viewModel.eventTagMap.collectAsStateWithLifecycle()
+    val snapInterval by viewModel.snapInterval.collectAsStateWithLifecycle()
+    val timePickerStyle by viewModel.timePickerStyle.collectAsStateWithLifecycle()
+    val selectedDate = viewModel.selectedDate
+    val viewMode = viewModel.viewMode
+
+    var showTimePicker by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var addDialogInitialTimes by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var eventToDelete by remember { mutableStateOf<Event?>(null) }
+    var eventToEdit by remember { mutableStateOf<Event?>(null) }
+
+    LaunchedEffect(pendingEventId) {
+        val id = pendingEventId ?: return@LaunchedEffect
+        val event = viewModel.getEventOnce(id)
+        onPendingEventConsumed()
+        if (event == null) return@LaunchedEffect
+        viewModel.selectDate(LocalDate.ofEpochDay(event.date))
+        eventToEdit = event
+    }
+
+    Scaffold(
+        topBar = {
+            CalendarTopBar(viewMode = viewMode, onViewModeChange = { viewModel.viewMode = it })
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showTimePicker = true }) {
+                Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_event))
+            }
+        },
+    ) { innerPadding ->
+        val contentModifier = Modifier.padding(innerPadding)
+        when (viewMode) {
+            ViewMode.MONTH -> MonthView(
+                selectedDate = selectedDate,
+                events = events,
+                eventTags = eventTagMap,
+                onDaySelected = viewModel::selectDate,
+                onDayAddRequested = { date ->
+                    viewModel.selectDate(date)
+                    showTimePicker = true
+                },
+                onEditRequested = { eventToEdit = it },
+                onDeleteRequested = { eventToDelete = it },
+                modifier = contentModifier,
+            )
+
+            ViewMode.DAY -> DayTimelineView(
+                date = selectedDate,
+                events = events.filter { it.date == selectedDate.toEpochDay() },
+                eventTags = eventTagMap,
+                modifier = contentModifier,
+            )
+        }
+    }
+
+    if (showTimePicker) {
+        TimeRangePickerDialog(
+            date = selectedDate,
+            events = events.filter { it.date == selectedDate.toEpochDay() },
+            eventTags = eventTagMap,
+            snapMinutes = snapInterval,
+            onDismiss = { showTimePicker = false },
+            onConfirm = { start, end ->
+                showTimePicker = false
+                addDialogInitialTimes = start to end
+                showAddDialog = true
+            },
+        )
+    }
+
+    if (showAddDialog) {
+        AddEventDialog(
+            date = selectedDate,
+            allTags = allTags,
+            initialStartSeconds = addDialogInitialTimes?.first,
+            initialEndSeconds = addDialogInitialTimes?.second,
+            onDismiss = {
+                showAddDialog = false
+                addDialogInitialTimes = null
+            },
+            onSave = { title, note, start, end, withAlarm, tags, repeat ->
+                viewModel.addEvent(
+                    title = title,
+                    note = note,
+                    date = selectedDate,
+                    start = start,
+                    end = end,
+                    withAlarm = withAlarm,
+                    tags = tags,
+                    repeat = repeat,
+                )
+                showAddDialog = false
+                addDialogInitialTimes = null
+            },
+        )
+    }
+
+    eventToEdit?.let { event ->
+        EditEventDialog(
+            event = event,
+            allTags = allTags,
+            timePickerStyle = timePickerStyle,
+            initialTags = eventTagMap[event.id].orEmpty(),
+            initialWithAlarm = alarms.any { it.eventId == event.id },
+            onDismiss = { eventToEdit = null },
+            onSave = { title, note, date, start, end, withAlarm, tags, scope ->
+                viewModel.updateEventScoped(
+                    event = event,
+                    scope = scope,
+                    title = title,
+                    note = note,
+                    date = date,
+                    start = start,
+                    end = end,
+                    withAlarm = withAlarm,
+                    tags = tags,
+                )
+                eventToEdit = null
+            },
+        )
+    }
+
+    eventToDelete?.let { event ->
+        val isSeries = event.seriesId != 0L
+        val seriesMembers = remember(event.id, events) {
+            if (isSeries) events.filter { it.seriesId == event.seriesId } else emptyList()
+        }
+        var scope by remember(event.id) { mutableStateOf(EventSeriesScope.THIS_EVENT) }
+        val affectedEvents = when (scope) {
+            EventSeriesScope.THIS_AND_SUBSEQUENT ->
+                seriesMembers.filter { it.occurrenceIndex >= event.occurrenceIndex }
+
+            EventSeriesScope.ENTIRE_SERIES -> seriesMembers
+            EventSeriesScope.THIS_EVENT -> listOf(event)
+        }
+        val hasLinkedAlarm = affectedEvents.any { candidate ->
+            alarms.any { it.eventId == candidate.id }
+        }
+        var deleteAlarmToo by remember(event.id) { mutableStateOf(true) }
+        AlertDialog(
+            onDismissRequest = { eventToDelete = null },
+            title = { Text(stringResource(R.string.delete_event)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (isSeries && scope != EventSeriesScope.THIS_EVENT) {
+                        Text(
+                            stringResource(
+                                R.string.delete_series_confirmation,
+                                event.title,
+                                affectedEvents.size,
+                            ),
+                        )
+                    } else {
+                        Text(stringResource(R.string.delete_event_confirmation, event.title))
+                    }
+                    if (isSeries) {
+                        ScopeSelector(scope = scope, onScopeChange = { scope = it })
+                    }
+                    if (hasLinkedAlarm) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = deleteAlarmToo,
+                                onCheckedChange = { deleteAlarmToo = it },
+                            )
+                            Text(stringResource(R.string.delete_event_with_alarm))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteEventScoped(
+                            event = event,
+                            scope = if (isSeries) scope else EventSeriesScope.THIS_EVENT,
+                            deleteAlarm = deleteAlarmToo && hasLinkedAlarm,
+                        )
+                        eventToDelete = null
+                    },
+                ) {
+                    Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { eventToDelete = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CalendarTopBar(viewMode: ViewMode, onViewModeChange: (ViewMode) -> Unit) {
+    TopAppBar(
+        title = { Text(stringResource(R.string.app_name)) },
+        actions = {
+            FilterChip(
+                selected = viewMode == ViewMode.MONTH,
+                onClick = { onViewModeChange(ViewMode.MONTH) },
+                label = { Text(stringResource(R.string.view_mode_month)) },
+            )
+            Spacer(Modifier.width(8.dp))
+            FilterChip(
+                selected = viewMode == ViewMode.DAY,
+                onClick = { onViewModeChange(ViewMode.DAY) },
+                label = { Text(stringResource(R.string.view_mode_day)) },
+            )
+            Spacer(Modifier.width(16.dp))
+        },
+    )
+}
+
+@Composable
+private fun MonthView(
+    selectedDate: LocalDate,
+    events: List<Event>,
+    eventTags: Map<Long, List<Tag>>,
+    onDaySelected: (LocalDate) -> Unit,
+    onDayAddRequested: (LocalDate) -> Unit,
+    onEditRequested: (Event) -> Unit,
+    onDeleteRequested: (Event) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var displayedMonth by remember { mutableStateOf(YearMonth.from(selectedDate)) }
+    LaunchedEffect(selectedDate) { displayedMonth = YearMonth.from(selectedDate) }
+
+    val today = LocalDate.now()
+    val eventsByDay = remember(events) { events.groupBy { it.date } }
+    val firstOfMonth = displayedMonth.atDay(1)
+    val gridStart = firstOfMonth.minusDays((firstOfMonth.dayOfWeek.value - 1).toLong())
+
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = { displayedMonth = displayedMonth.minusMonths(1) }) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = stringResource(R.string.prev_month),
+                )
+            }
+            Text(
+                text = displayedMonth.format(monthTitleFormatter),
+                style = MaterialTheme.typography.titleLarge,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = {
+                    displayedMonth = YearMonth.from(today)
+                    onDaySelected(today)
+                },
+            ) {
+                Text(stringResource(R.string.today))
+            }
+            IconButton(onClick = { displayedMonth = displayedMonth.plusMonths(1) }) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = stringResource(R.string.next_month),
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+        ) {
+            weekdayLabels.forEach { label ->
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp),
+        ) {
+            for (row in 0 until 6) {
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    for (column in 0 until 7) {
+                        val date = gridStart.plusDays((row * 7 + column).toLong())
+                        DayCell(
+                            date = date,
+                            inDisplayedMonth = YearMonth.from(date) == displayedMonth,
+                            isSelected = date == selectedDate,
+                            isToday = date == today,
+                            hasEvent = eventsByDay.containsKey(date.toEpochDay()),
+                            onClick = { onDaySelected(date) },
+                            onDoubleClick = { onDayAddRequested(date) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+        }
+
+        SelectedDayEvents(
+            date = selectedDate,
+            events = eventsByDay[selectedDate.toEpochDay()].orEmpty(),
+            eventTags = eventTags,
+            onEditRequested = onEditRequested,
+            onDeleteRequested = onDeleteRequested,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun SelectedDayEvents(
+    date: LocalDate,
+    events: List<Event>,
+    eventTags: Map<Long, List<Tag>>,
+    onEditRequested: (Event) -> Unit,
+    onDeleteRequested: (Event) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        HorizontalDivider()
+        Text(
+            text = date.format(dayTitleFormatter),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+        if (events.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = stringResource(R.string.empty_day),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(events, key = { it.id }) { event ->
+                    EventRow(
+                        event = event,
+                        tags = eventTags[event.id].orEmpty(),
+                        onClick = { onEditRequested(event) },
+                        onDeleteRequested = { onDeleteRequested(event) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DayCell(
+    date: LocalDate,
+    inDisplayedMonth: Boolean,
+    isSelected: Boolean,
+    isToday: Boolean,
+    hasEvent: Boolean,
+    onClick: () -> Unit,
+    onDoubleClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val numberColor = when {
+        isSelected -> colors.onPrimary
+        !inDisplayedMonth -> colors.outlineVariant
+        isToday -> colors.primary
+        else -> colors.onSurface
+    }
+    Box(
+        modifier = modifier
+            .aspectRatio(1f)
+            .padding(2.dp)
+            .then(
+                when {
+                    isSelected -> Modifier.background(colors.primary, CircleShape)
+                    isToday -> Modifier.border(1.5.dp, colors.primary, CircleShape)
+                    else -> Modifier
+                },
+            )
+            .combinedClickable(onClick = onClick, onDoubleClick = onDoubleClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = date.dayOfMonth.toString(),
+                color = numberColor,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            if (hasEvent) {
+                Spacer(Modifier.height(2.dp))
+                Box(
+                    modifier = Modifier
+                        .size(5.dp)
+                        .background(if (isSelected) colors.onPrimary else colors.primary, CircleShape),
+                )
+            }
+        }
+    }
+}
+
+private val HourHeight = 96.dp
+private val TimelineLabelWidth = 56.dp
+private const val TimelineEndOfDaySeconds = 86_340
+private const val MinEventDurationSeconds = 300
+private const val DefaultDraftDurationSeconds = 3_600
+
+private data class TimelineEventSlot(val event: Event, val lane: Int, val laneCount: Int)
+
+private enum class TimelineDragMode { MOVE, RESIZE_START, RESIZE_END }
+
+private fun snapSeconds(seconds: Int, snapMinutes: Int): Int {
+    val step = (snapMinutes * 60).coerceAtLeast(60)
+    return (seconds.toFloat() / step).roundToInt() * step
+}
+
+private fun defaultDraftTimes(snapMinutes: Int): Pair<Int, Int> {
+    val (defaultStart, _) = defaultTimeRange()
+    val start = snapSeconds(defaultStart, snapMinutes)
+        .coerceIn(0, TimelineEndOfDaySeconds - DefaultDraftDurationSeconds)
+    return start to (start + DefaultDraftDurationSeconds)
+}
+
+private fun resolveDrag(
+    mode: TimelineDragMode,
+    start: Int,
+    end: Int,
+    deltaSeconds: Int,
+    snapMinutes: Int,
+): Pair<Int, Int> {
+    val duration = (end - start).coerceAtLeast(MinEventDurationSeconds)
+    return when (mode) {
+        TimelineDragMode.MOVE -> {
+            val newStart = snapSeconds(start + deltaSeconds, snapMinutes)
+                .coerceIn(0, TimelineEndOfDaySeconds - duration)
+            newStart to (newStart + duration)
+        }
+
+        TimelineDragMode.RESIZE_START -> {
+            val newStart = snapSeconds(start + deltaSeconds, snapMinutes)
+                .coerceIn(0, end - MinEventDurationSeconds)
+            newStart to end
+        }
+
+        TimelineDragMode.RESIZE_END -> {
+            val newEnd = snapSeconds(end + deltaSeconds, snapMinutes)
+                .coerceIn(start + MinEventDurationSeconds, TimelineEndOfDaySeconds)
+            start to newEnd
+        }
+    }
+}
+
+private fun autoScrollDelta(
+    pointerY: Float,
+    viewportHeight: Float,
+    margin: Float,
+    maxStep: Float,
+): Float = when {
+    pointerY < margin -> -maxStep * ((margin - pointerY) / margin).coerceIn(0f, 1f)
+    pointerY > viewportHeight - margin ->
+        maxStep * ((pointerY - (viewportHeight - margin)) / margin).coerceIn(0f, 1f)
+
+    else -> 0f
+}
+
+private fun layoutTimelineEvents(events: List<Event>): List<TimelineEventSlot> {
+    if (events.isEmpty()) return emptyList()
+    val sorted = events.sortedWith(compareBy({ it.start }, { it.end }))
+    val result = mutableListOf<TimelineEventSlot>()
+    val laneEnds = mutableListOf<Int>()
+    val cluster = mutableListOf<Pair<Event, Int>>()
+    var clusterEnd = -1
+
+    fun flushCluster() {
+        val laneCount = laneEnds.size
+        cluster.forEach { (event, lane) -> result += TimelineEventSlot(event, lane, laneCount) }
+        cluster.clear()
+        laneEnds.clear()
+        clusterEnd = -1
+    }
+
+    for (event in sorted) {
+        if (cluster.isNotEmpty() && event.start >= clusterEnd) flushCluster()
+        val lane = laneEnds.indexOfFirst { it <= event.start }
+        if (lane == -1) {
+            laneEnds += event.end
+            cluster += event to (laneEnds.size - 1)
+        } else {
+            laneEnds[lane] = event.end
+            cluster += event to lane
+        }
+        clusterEnd = maxOf(clusterEnd, event.end)
+    }
+    if (cluster.isNotEmpty()) flushCluster()
+    return result
+}
+
+@Composable
+private fun DayTimelineView(
+    date: LocalDate,
+    events: List<Event>,
+    eventTags: Map<Long, List<Tag>>,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val scrollState = rememberScrollState()
+
+    LaunchedEffect(date) {
+        val targetSeconds = events.minOfOrNull { it.start }
+            ?: if (date == LocalDate.now()) LocalTime.now().toSecondOfDay() else 8 * 3_600
+        val targetPx = with(density) { (HourHeight * (targetSeconds / 3_600f)).roundToPx() }
+        val initialOffset = (targetPx - with(density) { 48.dp.roundToPx() }).coerceAtLeast(0)
+        scrollState.scrollTo(initialOffset)
+    }
+
+    Column(modifier = modifier.fillMaxSize()) {
+        Text(
+            text = date.format(dayTitleFormatter),
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        )
+        HorizontalDivider()
+        TimelineContent(
+            date = date,
+            events = events,
+            eventTags = eventTags,
+            snapMinutes = DEFAULT_SNAP_INTERVAL_MINUTES,
+            draftTimes = null,
+            onDraftTimesChange = {},
+            scrollState = scrollState,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+@Composable
+private fun TimeRangePickerDialog(
+    date: LocalDate,
+    events: List<Event>,
+    eventTags: Map<Long, List<Tag>>,
+    snapMinutes: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (Int, Int) -> Unit,
+) {
+    val density = LocalDensity.current
+    val scrollState = rememberScrollState()
+    var draftTimes by remember { mutableStateOf(defaultDraftTimes(snapMinutes)) }
+
+    LaunchedEffect(Unit) {
+        val draftTop = with(density) { (HourHeight * (draftTimes.first / 3_600f)).roundToPx() }
+        val targetOffset = (draftTop - with(density) { 120.dp.roundToPx() }).coerceAtLeast(0)
+        scrollState.scrollTo(targetOffset)
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = date.format(dayTitleFormatter),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = stringResource(R.string.select_time),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                Spacer(Modifier.height(8.dp))
+                TimelineContent(
+                    date = date,
+                    events = events,
+                    eventTags = eventTags,
+                    snapMinutes = snapMinutes,
+                    draftTimes = draftTimes,
+                    onDraftTimesChange = { draftTimes = it },
+                    scrollState = scrollState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(420.dp),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    DraftActionButton(
+                        icon = Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.draft_discard_cd),
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        onClick = onDismiss,
+                    )
+                    DraftActionButton(
+                        icon = Icons.Filled.Check,
+                        contentDescription = stringResource(R.string.draft_confirm_cd),
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        onClick = { onConfirm(draftTimes.first, draftTimes.second) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimelineContent(
+    date: LocalDate,
+    events: List<Event>,
+    eventTags: Map<Long, List<Tag>>,
+    snapMinutes: Int,
+    draftTimes: Pair<Int, Int>?,
+    onDraftTimesChange: (Pair<Int, Int>) -> Unit,
+    scrollState: ScrollState,
+    modifier: Modifier = Modifier,
+) {
+    val slots = remember(events) { layoutTimelineEvents(events) }
+    BoxWithConstraints(modifier = modifier) {
+        val panelWidth = maxWidth - TimelineLabelWidth
+        val viewportHeightPx = with(LocalDensity.current) { maxHeight.toPx() }
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState),
+        ) {
+            Column(modifier = Modifier.width(TimelineLabelWidth)) {
+                for (hour in 0..23) {
+                    Box(
+                        modifier = Modifier.height(HourHeight),
+                        contentAlignment = Alignment.TopEnd,
+                    ) {
+                        Text(
+                            text = timeFormatter.format(
+                                LocalTime.ofSecondOfDay(hour * 3_600L),
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = 8.dp, top = 2.dp),
+                        )
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .width(panelWidth)
+                    .height(HourHeight * 24),
+            ) {
+                for (hour in 1..23) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .offset(y = HourHeight * hour)
+                            .height(1.dp)
+                            .background(
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            ),
+                    )
+                }
+
+                slots.forEach { slot ->
+                    val event = slot.event
+                    val blockHeight = (HourHeight * ((event.end - event.start) / 3_600f))
+                        .coerceAtLeast(20.dp)
+                    val laneWidth = panelWidth / slot.laneCount
+                    TimelineEventBlock(
+                        event = event,
+                        tags = eventTags[event.id].orEmpty(),
+                        modifier = Modifier
+                            .offset(
+                                x = laneWidth * slot.lane + 1.dp,
+                                y = HourHeight * (event.start / 3_600f),
+                            )
+                            .width(laneWidth - 2.dp)
+                            .height(blockHeight),
+                    )
+                }
+
+                draftTimes?.let { (draftStart, draftEnd) ->
+                    val draftTop = HourHeight * (draftStart / 3_600f)
+                    val draftHeight = (HourHeight * ((draftEnd - draftStart) / 3_600f))
+                        .coerceAtLeast(20.dp)
+                    DraftEventBlock(
+                        startSeconds = draftStart,
+                        endSeconds = draftEnd,
+                        snapMinutes = snapMinutes,
+                        scrollState = scrollState,
+                        viewportHeightPx = viewportHeightPx,
+                        onTimesChange = onDraftTimesChange,
+                        modifier = Modifier
+                            .offset(x = 2.dp, y = draftTop)
+                            .width(panelWidth - 4.dp)
+                            .height(draftHeight),
+                    )
+                }
+
+                if (date == LocalDate.now()) {
+                    val nowSeconds = LocalTime.now().toSecondOfDay()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .offset(y = HourHeight * (nowSeconds / 3_600f)),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .offset(x = (-3).dp)
+                                .size(6.dp)
+                                .background(MaterialTheme.colorScheme.error, CircleShape),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(1.5.dp)
+                                .background(MaterialTheme.colorScheme.error),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimelineEventBlock(
+    event: Event,
+    tags: List<Tag>,
+    modifier: Modifier = Modifier,
+) {
+    val tagColors = tags.mapNotNull { tag -> if (tag.color == 0) null else Color(tag.color) }
+    val durationSeconds = (event.end - event.start).coerceAtLeast(0)
+    val shape = RoundedCornerShape(8.dp)
+
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        if (tagColors.isNotEmpty()) {
+            TagColorStripe(
+                colors = tagColors,
+                modifier = Modifier
+                    .padding(start = 4.dp, top = 6.dp, bottom = 6.dp)
+                    .width(TagColorStripeWidth)
+                    .fillMaxHeight(),
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = event.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = if (durationSeconds >= 1_800) 2 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (event.isRecurring) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = stringResource(R.string.series_row_label),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+            }
+            if (durationSeconds >= 1_800) {
+                Text(
+                    text = "${timeFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))} – " +
+                        timeFormatter.format(LocalTime.ofSecondOfDay(event.end.toLong())),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DraftEventBlock(
+    startSeconds: Int,
+    endSeconds: Int,
+    snapMinutes: Int,
+    scrollState: ScrollState,
+    viewportHeightPx: Float,
+    onTimesChange: (Pair<Int, Int>) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val latestStart = rememberUpdatedState(startSeconds)
+    val latestEnd = rememberUpdatedState(endSeconds)
+    val latestSnap = rememberUpdatedState(snapMinutes)
+    val latestChange = rememberUpdatedState(onTimesChange)
+    val shape = RoundedCornerShape(8.dp)
+    val handleFill = MaterialTheme.colorScheme.surface
+    val handleBorder = MaterialTheme.colorScheme.primary
+
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.primary)
+            .pointerInput(Unit) { detectTapGestures { } }
+            .pointerInput(Unit) {
+                coroutineScope {
+                    var mode = TimelineDragMode.MOVE
+                    var originStart = 0
+                    var originEnd = 0
+                    var accumulated = 0f
+                    var pointerViewportY = 0f
+                    val resizeZone = 20.dp.toPx()
+                    val pxPerSecond = HourHeight.toPx() / 3_600f
+                    val autoScrollMargin = 56.dp.toPx()
+                    val maxScrollPerFrame = 16.dp.toPx()
+
+                    fun blockTopInViewport(): Float =
+                        HourHeight.toPx() * (latestStart.value / 3_600f) - scrollState.value
+
+                    fun updateTimes() {
+                        val deltaSeconds = (accumulated / pxPerSecond).roundToInt()
+                        latestChange.value(
+                            resolveDrag(
+                                mode,
+                                originStart,
+                                originEnd,
+                                deltaSeconds,
+                                latestSnap.value,
+                            ),
+                        )
+                    }
+
+                    var scrollJob: Job? = null
+                    detectDragGestures(
+                        onDragStart = { position ->
+                            originStart = latestStart.value
+                            originEnd = latestEnd.value
+                            accumulated = 0f
+                            pointerViewportY = blockTopInViewport() + position.y
+                            mode = when {
+                                position.y <= resizeZone -> TimelineDragMode.RESIZE_START
+                                position.y >= size.height - resizeZone ->
+                                    TimelineDragMode.RESIZE_END
+
+                                else -> TimelineDragMode.MOVE
+                            }
+                            scrollJob?.cancel()
+                            scrollJob = launch {
+                                while (true) {
+                                    val scrollDelta = autoScrollDelta(
+                                        pointerY = pointerViewportY,
+                                        viewportHeight = viewportHeightPx,
+                                        margin = autoScrollMargin,
+                                        maxStep = maxScrollPerFrame,
+                                    )
+                                    if (scrollDelta != 0f) {
+                                        val consumed = scrollState.dispatchRawDelta(scrollDelta)
+                                        if (consumed != 0f) {
+                                            accumulated += consumed
+                                            updateTimes()
+                                        }
+                                    }
+                                    withFrameNanos { }
+                                }
+                            }
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            accumulated += dragAmount.y
+                            pointerViewportY = blockTopInViewport() + change.position.y
+                            updateTimes()
+                        },
+                        onDragEnd = {
+                            scrollJob?.cancel()
+                            scrollJob = null
+                        },
+                        onDragCancel = {
+                            scrollJob?.cancel()
+                            scrollJob = null
+                        },
+                    )
+                }
+            },
+    ) {
+        Text(
+            text = "${timeFormatter.format(LocalTime.ofSecondOfDay(startSeconds.toLong()))} – " +
+                timeFormatter.format(LocalTime.ofSecondOfDay(endSeconds.toLong())),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 12.dp, end = 28.dp, top = 8.dp),
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = (-6).dp, y = 6.dp)
+                .size(14.dp)
+                .background(handleFill, CircleShape)
+                .border(1.5.dp, handleBorder, CircleShape),
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .offset(x = 6.dp, y = (-6).dp)
+                .size(14.dp)
+                .background(handleFill, CircleShape)
+                .border(1.5.dp, handleBorder, CircleShape),
+        )
+    }
+}
+
+@Composable
+private fun DraftActionButton(
+    icon: ImageVector,
+    contentDescription: String,
+    containerColor: Color,
+    contentColor: Color,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.size(32.dp),
+        shape = CircleShape,
+        color = containerColor,
+        contentColor = contentColor,
+        shadowElevation = 2.dp,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun EventRow(
+    event: Event,
+    tags: List<Tag>,
+    onClick: () -> Unit,
+    onDeleteRequested: () -> Unit,
+) {
+    val tagColors = tags.mapNotNull { tag ->
+        if (tag.color == 0) null else Color(tag.color)
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onDeleteRequested),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+        ) {
+            if (tagColors.isNotEmpty()) {
+                TagColorStripe(
+                    colors = tagColors,
+                    modifier = Modifier
+                        .padding(start = 8.dp, top = 12.dp, bottom = 12.dp)
+                        .width(TagColorStripeWidth)
+                        .fillMaxHeight(),
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(16.dp),
+            ) {
+                Text(
+                    text = "${timeFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))} – " +
+                        timeFormatter.format(LocalTime.ofSecondOfDay(event.end.toLong())),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = event.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (event.isRecurring) {
+                        Spacer(Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = stringResource(R.string.series_row_label),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+                if (event.note.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = event.note,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (tags.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    TagPills(tags = tags)
+                }
+            }
+        }
+    }
+}
+
+private enum class TimeField { START, END }
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun AddEventDialog(
+    date: LocalDate,
+    allTags: List<Tag>,
+    initialStartSeconds: Int? = null,
+    initialEndSeconds: Int? = null,
+    onDismiss: () -> Unit,
+    onSave: (
+        title: String,
+        note: String,
+        start: LocalTime,
+        end: LocalTime,
+        withAlarm: Boolean,
+        tags: List<Tag>,
+        repeat: RecurrenceRule,
+    ) -> Unit,
+) {
+    val (defaultStart, defaultEnd) = remember { defaultTimeRange() }
+    var title by rememberSaveable { mutableStateOf("") }
+    var note by rememberSaveable { mutableStateOf("") }
+    var startSeconds by rememberSaveable {
+        mutableIntStateOf(initialStartSeconds ?: defaultStart)
+    }
+    var endSeconds by rememberSaveable {
+        mutableIntStateOf(initialEndSeconds ?: defaultEnd)
+    }
+    var withAlarm by rememberSaveable { mutableStateOf(false) }
+    var selectedTagIds by rememberSaveable { mutableStateOf(longArrayOf()) }
+    var repeatType by rememberSaveable { mutableIntStateOf(Event.REPEAT_NONE) }
+    var repeatDayIds by rememberSaveable {
+        mutableStateOf(longArrayOf(date.dayOfWeek.value.toLong()))
+    }
+    var repeatUntilEpochDay by rememberSaveable {
+        mutableLongStateOf(date.plusDays(90).toEpochDay())
+    }
+    var showRepeatDatePicker by remember { mutableStateOf(false) }
+
+    val selectedTags = allTags.filter { it.id in selectedTagIds }
+    val onTagToggle: (Tag) -> Unit = { tag ->
+        selectedTagIds = when {
+            tag.id in selectedTagIds -> selectedTagIds.filter { it != tag.id }.toLongArray()
+            selectedTagIds.size < MAX_TAGS_PER_ITEM -> selectedTagIds + tag.id
+            else -> selectedTagIds
+        }
+    }
+    val repeatRule = RecurrenceRule(
+        type = repeatType,
+        days = repeatDayIds.map { it.toInt() }.toSet(),
+        untilEpochDay = repeatUntilEpochDay,
+    )
+    val isRepeatUntilValid = repeatType == Event.REPEAT_NONE ||
+        repeatUntilEpochDay > date.toEpochDay()
+    val isRepeatDaysValid = repeatType != Event.REPEAT_WEEKLY || repeatDayIds.isNotEmpty()
+    val isValid = title.isNotBlank() && isRepeatUntilValid && isRepeatDaysValid
+    val occurrenceCount = if (repeatType == Event.REPEAT_NONE) {
+        1
+    } else {
+        1 + recurrenceDates(date, repeatRule).size
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = date.format(dayTitleFormatter),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = stringResource(R.string.add_event),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text(stringResource(R.string.event_title_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text(stringResource(R.string.event_note_label)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TagPicker(
+                    allTags = allTags,
+                    selectedTags = selectedTags,
+                    onToggle = onTagToggle,
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = stringResource(R.string.repeat_rule_label),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = repeatType == Event.REPEAT_NONE,
+                            onClick = { repeatType = Event.REPEAT_NONE },
+                            label = { Text(stringResource(R.string.repeat_none)) },
+                        )
+                        FilterChip(
+                            selected = repeatType == Event.REPEAT_DAILY,
+                            onClick = { repeatType = Event.REPEAT_DAILY },
+                            label = { Text(stringResource(R.string.repeat_daily)) },
+                        )
+                        FilterChip(
+                            selected = repeatType == Event.REPEAT_WEEKLY,
+                            onClick = { repeatType = Event.REPEAT_WEEKLY },
+                            label = { Text(stringResource(R.string.repeat_weekly)) },
+                        )
+                    }
+                    if (repeatType == Event.REPEAT_WEEKLY) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            weekdayLabels.forEachIndexed { index, label ->
+                                val day = (index + 1).toLong()
+                                FilterChip(
+                                    selected = day in repeatDayIds,
+                                    onClick = {
+                                        repeatDayIds = if (day in repeatDayIds) {
+                                            repeatDayIds.filter { it != day }.toLongArray()
+                                        } else {
+                                            repeatDayIds + day
+                                        }
+                                    },
+                                    label = { Text(label) },
+                                )
+                            }
+                        }
+                        Text(
+                            text = stringResource(R.string.repeat_weekday_pick_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (repeatType != Event.REPEAT_NONE) {
+                        OutlinedButton(
+                            onClick = { showRepeatDatePicker = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = stringResource(R.string.repeat_until_label),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = LocalDate.ofEpochDay(repeatUntilEpochDay)
+                                        .format(dateFormatter),
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                        }
+                        if (!isRepeatUntilValid) {
+                            Text(
+                                text = stringResource(R.string.repeat_until_invalid),
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        } else {
+                            Text(
+                                text = stringResource(R.string.series_size_info, occurrenceCount),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.event_alarm_label),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(checked = withAlarm, onCheckedChange = { withAlarm = it })
+                }
+                if (withAlarm) {
+                    Text(
+                        text = stringResource(R.string.event_alarm_helper),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                    TextButton(
+                        onClick = {
+                            onSave(
+                                title.trim(),
+                                note.trim(),
+                                LocalTime.ofSecondOfDay(startSeconds.toLong()),
+                                LocalTime.ofSecondOfDay(endSeconds.toLong()),
+                                withAlarm,
+                                selectedTags,
+                                repeatRule,
+                            )
+                        },
+                        enabled = isValid,
+                    ) {
+                        Text(stringResource(R.string.add_event))
+                    }
+                }
+            }
+        }
+    }
+
+    if (showRepeatDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = repeatUntilEpochDay * 86_400_000L,
+        )
+        DatePickerDialog(
+            onDismissRequest = { showRepeatDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            repeatUntilEpochDay = millis / 86_400_000L
+                        }
+                        showRepeatDatePicker = false
+                    },
+                ) {
+                    Text(stringResource(R.string.ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRepeatDatePicker = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditEventDialog(
+    event: Event,
+    allTags: List<Tag>,
+    timePickerStyle: TimePickerStyle,
+    initialTags: List<Tag>,
+    initialWithAlarm: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (
+        title: String,
+        note: String,
+        date: LocalDate,
+        start: LocalTime,
+        end: LocalTime,
+        withAlarm: Boolean,
+        tags: List<Tag>,
+        scope: EventSeriesScope,
+    ) -> Unit,
+) {
+    var title by rememberSaveable(event.id) { mutableStateOf(event.title) }
+    var note by rememberSaveable(event.id) { mutableStateOf(event.note) }
+    var dateEpochDay by rememberSaveable(event.id) { mutableLongStateOf(event.date) }
+    var startSeconds by rememberSaveable(event.id) { mutableIntStateOf(event.start) }
+    var endSeconds by rememberSaveable(event.id) { mutableIntStateOf(event.end) }
+    var withAlarm by rememberSaveable(event.id) { mutableStateOf(initialWithAlarm) }
+    var selectedTagIds by rememberSaveable(event.id) {
+        mutableStateOf(initialTags.map { it.id }.toLongArray())
+    }
+    var scope by rememberSaveable(event.id) {
+        mutableStateOf(EventSeriesScope.THIS_EVENT)
+    }
+    var timeField by remember { mutableStateOf<TimeField?>(null) }
+    var showDatePicker by remember { mutableStateOf(false) }
+
+    val isSeries = event.seriesId != 0L
+    val selectedTags = allTags.filter { it.id in selectedTagIds }
+    val onTagToggle: (Tag) -> Unit = { tag ->
+        selectedTagIds = when {
+            tag.id in selectedTagIds -> selectedTagIds.filter { it != tag.id }.toLongArray()
+            selectedTagIds.size < MAX_TAGS_PER_ITEM -> selectedTagIds + tag.id
+            else -> selectedTagIds
+        }
+    }
+    val isValid = title.isNotBlank() && endSeconds > startSeconds
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.edit_event),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                OutlinedButton(
+                    onClick = { showDatePicker = true },
+                    enabled = scope != EventSeriesScope.ENTIRE_SERIES,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.event_date_label),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = LocalDate.ofEpochDay(dateEpochDay).format(dayTitleFormatter),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text(stringResource(R.string.event_title_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TimeSlotButton(
+                        label = stringResource(R.string.start_time_label),
+                        secondsOfDay = startSeconds,
+                        onClick = { timeField = TimeField.START },
+                        modifier = Modifier.weight(1f),
+                    )
+                    TimeSlotButton(
+                        label = stringResource(R.string.end_time_label),
+                        secondsOfDay = endSeconds,
+                        onClick = { timeField = TimeField.END },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (endSeconds <= startSeconds) {
+                    Text(
+                        text = stringResource(R.string.invalid_time_range),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text(stringResource(R.string.event_note_label)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TagPicker(
+                    allTags = allTags,
+                    selectedTags = selectedTags,
+                    onToggle = onTagToggle,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.event_alarm_label),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(checked = withAlarm, onCheckedChange = { withAlarm = it })
+                }
+                if (withAlarm) {
+                    Text(
+                        text = stringResource(R.string.event_alarm_helper),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (isSeries) {
+                    HorizontalDivider()
+                    Text(
+                        text = stringResource(R.string.apply_scope_label),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    ScopeSelector(scope = scope, onScopeChange = { scope = it })
+                    when (scope) {
+                        EventSeriesScope.ENTIRE_SERIES -> Text(
+                            text = stringResource(R.string.scope_all_series_helper),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        EventSeriesScope.THIS_AND_SUBSEQUENT -> if (dateEpochDay != event.date) {
+                            Text(
+                                text = stringResource(R.string.scope_subsequent_date_helper),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+
+                        EventSeriesScope.THIS_EVENT -> Unit
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                    TextButton(
+                        onClick = {
+                            onSave(
+                                title.trim(),
+                                note.trim(),
+                                LocalDate.ofEpochDay(dateEpochDay),
+                                LocalTime.ofSecondOfDay(startSeconds.toLong()),
+                                LocalTime.ofSecondOfDay(endSeconds.toLong()),
+                                withAlarm,
+                                selectedTags,
+                                scope,
+                            )
+                        },
+                        enabled = isValid,
+                    ) {
+                        Text(stringResource(R.string.save))
+                    }
+                }
+            }
+        }
+    }
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = dateEpochDay * 86_400_000L,
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            dateEpochDay = millis / 86_400_000L
+                        }
+                        showDatePicker = false
+                    },
+                ) {
+                    Text(stringResource(R.string.ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    timeField?.let { field ->
+        TimePickerDialog(
+            initialSecondsOfDay = if (field == TimeField.START) startSeconds else endSeconds,
+            style = timePickerStyle,
+            onDismiss = { timeField = null },
+            onConfirm = { picked ->
+                if (field == TimeField.START) startSeconds = picked else endSeconds = picked
+                timeField = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun TimeSlotButton(
+    label: String,
+    secondsOfDay: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedButton(onClick = onClick, modifier = modifier) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = timeFormatter.format(LocalTime.ofSecondOfDay(secondsOfDay.toLong())),
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+    }
+}
+
+// Defaults for a new event: the next half hour and one hour after that.
+private fun defaultTimeRange(): Pair<Int, Int> {
+    val now = LocalTime.now().withSecond(0).withNano(0)
+    val start = if (now.minute < 30) now.withMinute(30) else now.plusHours(1).withMinute(0)
+    return start.toSecondOfDay() to start.plusHours(1).toSecondOfDay()
+}
+
+@Composable
+private fun ScopeSelector(
+    scope: EventSeriesScope,
+    onScopeChange: (EventSeriesScope) -> Unit,
+) {
+    Column {
+        EventSeriesScope.entries.forEach { option ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onScopeChange(option) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    selected = scope == option,
+                    onClick = { onScopeChange(option) },
+                )
+                Text(stringResource(option.labelRes()))
+            }
+        }
+    }
+}
+
+private fun EventSeriesScope.labelRes(): Int = when (this) {
+    EventSeriesScope.THIS_EVENT -> R.string.scope_this_event
+    EventSeriesScope.THIS_AND_SUBSEQUENT -> R.string.scope_this_and_subsequent
+    EventSeriesScope.ENTIRE_SERIES -> R.string.scope_entire_series
+}
