@@ -1,5 +1,7 @@
 # Clockwise
 
+[English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
+
 Clockwise is a local-first calendar and alarm app for Android, built with Jetpack Compose and
 Material 3. It combines a month/day calendar, exact alarms with full-screen ringing, colored tags,
 and an optional AI assistant that can read and change your schedule after you approve a preview.
