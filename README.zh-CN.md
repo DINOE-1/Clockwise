@@ -8,6 +8,18 @@ Clockwise 是一款本地优先的 Android 日历与闹钟应用，使用 Jetpac
 
 界面目前仅提供繁体中文（zh-TW），源代码和文档以英文为主。
 
+## 界面预览
+
+以下是主要界面的快速预览：
+
+| 月视图 | 日视图 | 创建活动 |
+| :---: | :---: | :---: |
+| <img src="images/Calendar_Month.png" width="230" alt="日历月视图"> | <img src="images/Calendar_Day.png" width="230" alt="日历日时间轴"> | <img src="images/Create_Event.png" width="230" alt="在时间轴上创建活动"> |
+
+| 闹钟 | AI 助手 |
+| :---: | :---: |
+| <img src="images/Alarms.png" width="230" alt="闹钟列表"> | <img src="images/AI.png" width="230" alt="AI 助手应用变更预览"> |
+
 ## 功能
 
 ### 日历

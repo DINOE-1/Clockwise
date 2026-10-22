@@ -9,6 +9,18 @@ and an optional AI assistant that can read and change your schedule after you ap
 The UI is currently written in Traditional Chinese (zh-TW). The source code and documentation are
 in English.
 
+## Screenshots
+
+A quick look at the main screens:
+
+| Month view | Day view | Create event |
+| :---: | :---: | :---: |
+| <img src="images/Calendar_Month.png" width="230" alt="Calendar month view"> | <img src="images/Calendar_Day.png" width="230" alt="Calendar day timeline"> | <img src="images/Create_Event.png" width="230" alt="Creating an event on the timeline"> |
+
+| Alarms | AI assistant |
+| :---: | :---: |
+| <img src="images/Alarms.png" width="230" alt="Alarm list"> | <img src="images/AI.png" width="230" alt="AI assistant applying a change preview"> |
+
 ## Features
 
 ### Calendar

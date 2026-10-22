@@ -8,6 +8,18 @@ AI 會在你確認預覽後讀取並修改行程。
 
 介面目前為繁體中文（zh-TW），原始碼與文件以英文為主。
 
+## 畫面預覽
+
+以下是主要畫面的快速預覽：
+
+| 月檢視 | 日檢視 | 建立活動 |
+| :---: | :---: | :---: |
+| <img src="images/Calendar_Month.png" width="230" alt="行事曆月檢視"> | <img src="images/Calendar_Day.png" width="230" alt="行事曆日時間軸"> | <img src="images/Create_Event.png" width="230" alt="在時間軸上建立活動"> |
+
+| 鬧鐘 | AI 助理 |
+| :---: | :---: |
+| <img src="images/Alarms.png" width="230" alt="鬧鐘清單"> | <img src="images/AI.png" width="230" alt="AI 助理套用變更預覽"> |
+
 ## 功能
 
 ### 行事曆
