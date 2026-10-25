@@ -28,8 +28,14 @@ jobs:
           java-version: "21"
           cache: gradle
 
+      # The action's default package list ("tools platform-tools") breaks on current
+      # SDK repositories because the legacy "tools" package no longer exists.
+      # Only install platform-tools here; Gradle auto-downloads the platform and
+      # build-tools versions this project needs once licenses are accepted.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
 
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
