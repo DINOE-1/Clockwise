@@ -6,8 +6,9 @@ Clockwise is a local-first calendar and alarm app for Android, built with Jetpac
 Material 3. It combines a month/day calendar, exact alarms with full-screen ringing, colored tags,
 and an optional AI assistant that can read and change your schedule after you approve a preview.
 
-The UI is currently written in Traditional Chinese (zh-TW). The source code and documentation are
-in English.
+The UI is available in English and Traditional Chinese (zh-TW). It follows the system language by
+default, and you can switch languages in **Settings → Language**. The source code and documentation
+are in English.
 
 ## Screenshots
 
@@ -57,6 +58,7 @@ A quick look at the main screens:
 
 ### Customization and data
 
+- Language: follow system, English, or Traditional Chinese.
 - Themes: follow system, light, dark, and Gruvbox Material.
 - Wheel or clock time pickers, configurable timeline snap interval, and two alarm-stack animations.
 - Colored tags shared by events and alarms, with a per-item tag limit.
@@ -71,7 +73,7 @@ A quick look at the main screens:
 | 鬧鐘 / Alarms | Alarm list, countdowns, editor, permission/reliability checks |
 | AI | Chat, change previews, saved conversations, token usage |
 | 標籤 / Tags | Create and manage colored tags |
-| 設定 / Settings | Theme, time picker, snap interval, alarm animation, AI configuration |
+| 設定 / Settings | Language, theme, time picker, snap interval, alarm animation, AI configuration |
 
 ## Requirements
 
@@ -238,6 +240,5 @@ Issues and pull requests are welcome. Before opening a PR:
 
 - The calendar is local-only; it does not sync with Google Calendar, CalDAV, or the system calendar
   provider.
-- The UI is only localized to Traditional Chinese at the moment.
 - There is no home-screen widget.
 - AI features depend on an external provider and its availability, pricing, and data policy.
