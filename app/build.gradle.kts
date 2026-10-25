@@ -5,6 +5,21 @@ plugins {
     alias(libs.plugins.room)
 }
 
+// Release signing is optional. Values are read from Gradle properties first, then environment
+// variables, so a keystore can be supplied by CI or a local shell without committing secrets.
+// When any value is missing, the release variant is built unsigned.
+val releaseSigningValues = listOf(
+    "KEYSTORE_FILE",
+    "KEYSTORE_PASSWORD",
+    "KEY_ALIAS",
+    "KEY_PASSWORD",
+).associateWith { name ->
+    providers.gradleProperty(name).orNull
+        ?: providers.environmentVariable(name).orNull
+}
+
+val hasReleaseSigning = releaseSigningValues.values.all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.dinoe.clockwise"
     compileSdk = 37
@@ -13,18 +28,41 @@ android {
         applicationId = "com.dinoe.clockwise"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.0"
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseSigningValues.getValue("KEYSTORE_FILE")!!)
+                storePassword = releaseSigningValues.getValue("KEYSTORE_PASSWORD")
+                keyAlias = releaseSigningValues.getValue("KEY_ALIAS")
+                keyPassword = releaseSigningValues.getValue("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
+    }
+
+    lint {
+        // Work around a Kotlin analysis API crash in this toolchain (ExperimentalDetector):
+        // disable only the two opt-in checks named by the failure. All other lint checks run.
+        disable += "UnsafeOptInUsageError"
+        disable += "UnsafeOptInUsageWarning"
+        abortOnError = true
     }
 
     compileOptions {

@@ -128,6 +128,31 @@ fun AlarmPermissionRows(
             },
             onAction = if (status.notificationsGranted) null else onRequestNotifications,
         )
+        if (status.channelBlocked) {
+            PermissionRow(
+                title = stringResource(R.string.alarm_channel_title),
+                body = stringResource(R.string.alarm_channel_blocked),
+                granted = false,
+                actionLabel = stringResource(R.string.open_settings),
+                onAction = {
+                    AlarmPermissions.open(
+                        context,
+                        AlarmPermissions.appNotificationSettingsIntent(context),
+                    )
+                },
+            )
+        }
+        if (status.dndActive) {
+            PermissionRow(
+                title = stringResource(R.string.alarm_dnd_title),
+                body = stringResource(R.string.alarm_dnd_body),
+                granted = false,
+                actionLabel = stringResource(R.string.open_settings),
+                onAction = {
+                    AlarmPermissions.open(context, AlarmPermissions.dndAccessIntent())
+                },
+            )
+        }
         PermissionRow(
             title = stringResource(R.string.alarm_exact_permission_title),
             body = stringResource(R.string.alarm_exact_permission_hint),

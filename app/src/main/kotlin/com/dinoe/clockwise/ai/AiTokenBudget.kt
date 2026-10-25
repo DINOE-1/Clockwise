@@ -12,7 +12,13 @@ object AiTokenBudget {
     const val MAX_CURRENT_TOOL_TOKENS = 2_400
     const val MAX_TOOL_RESULT_TOKENS = 1_200
     const val MAX_INPUT_TOKENS = 8_000
+
+    /** Hard input cap used when the selected model's context length is unknown. */
     const val HARD_INPUT_TOKENS = 12_000
+    const val OUTPUT_RESERVE_TOKENS = 4_096
+    const val CONTEXT_SAFETY_MARGIN_TOKENS = 512
+    const val MIN_DERIVED_INPUT_TOKENS = 1_024
+    const val MAX_DERIVED_INPUT_TOKENS = 32_000
     const val MAX_TOOL_ROUNDS = 5
     const val MAX_BATCH_ITEMS = 30
     const val MAX_RECURRING_OCCURRENCES = 180
@@ -40,6 +46,28 @@ object AiTokenBudget {
 
     fun estimateMessageTokens(content: String?, toolCallTokens: Int = 0): Int =
         MESSAGE_OVERHEAD_TOKENS + estimateTokens(content) + toolCallTokens
+
+    /**
+     * Input budget for one request. Known model context lengths are reduced by the output reserve
+     * and a tokenizer safety margin; the result is clamped so a huge advertised context cannot
+     * produce an unbounded request and a tiny context cannot go below a usable floor. Unknown
+     * models keep the conservative legacy cap.
+     */
+    fun inputBudgetFor(modelContextLength: Long?): Int {
+        val context = modelContextLength?.takeIf { it > 0 } ?: return HARD_INPUT_TOKENS
+        val minimumInput = MIN_DERIVED_INPUT_TOKENS.toLong()
+            .coerceAtMost((context - CONTEXT_SAFETY_MARGIN_TOKENS).coerceAtLeast(0))
+        // Do not reserve more output tokens than the model can hold alongside the minimum usable
+        // input and safety margin. This keeps input + output within a 4k model's context instead
+        // of blindly reserving 4096 output tokens.
+        val outputReserve = OUTPUT_RESERVE_TOKENS.toLong()
+            .coerceAtMost(context - minimumInput - CONTEXT_SAFETY_MARGIN_TOKENS)
+            .coerceAtLeast(0)
+        val usable = context - outputReserve - CONTEXT_SAFETY_MARGIN_TOKENS
+        return usable
+            .coerceIn(0L, MAX_DERIVED_INPUT_TOKENS.toLong())
+            .toInt()
+    }
 
     fun truncateToTokens(text: String, maxTokens: Int): String {
         if (maxTokens <= 0) return ""

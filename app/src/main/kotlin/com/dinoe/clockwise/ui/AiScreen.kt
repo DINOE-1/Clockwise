@@ -80,12 +80,13 @@ import com.dinoe.clockwise.data.AI_CHAT_SESSION_DEFAULT_TITLE
 import com.dinoe.clockwise.data.AiChatSessionSummary
 import com.dinoe.clockwise.data.Event
 import com.dinoe.clockwise.data.EventScope
-import java.text.SimpleDateFormat
+import java.time.DayOfWeek
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import java.util.Date
+import java.time.ZoneId
+import java.time.format.TextStyle
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -719,9 +720,12 @@ private fun AlarmDraftRow(alarm: AlarmDraft) {
 
 @Composable
 private fun EventDraftRow(event: EventDraft) {
+    val locale = rememberLocale()
     val dateText = formatDate(event.date)
     val timeRange = "${formatTime(event.start)}–${formatTime(event.end)}"
-    val weekdayText = event.repeatDays.sorted().joinToString("、") { weekdayLabel(it) }
+    val weekdayText = event.repeatDays.sorted().joinToString(", ") {
+        weekdayLabel(it, locale)
+    }
     val repeatText = when (event.repeatType) {
         Event.REPEAT_DAILY -> stringResource(R.string.ai_proposal_repeat_daily)
         Event.REPEAT_WEEKLY -> stringResource(R.string.ai_proposal_repeat_weekly, weekdayText)
@@ -1447,18 +1451,15 @@ private fun UsageDialog(
     )
 }
 
-private fun formatTime(time: LocalTime): String = TIME_FORMATTER.format(time)
+@Composable
+private fun formatTime(time: LocalTime): String = rememberClockFormatter().format(time)
 
 @Composable
 private fun formatDate(date: LocalDate): String =
-    stringResource(
-        R.string.ai_format_date_weekday,
-        date.monthValue,
-        date.dayOfMonth,
-        WEEKDAY_LABELS[date.dayOfWeek.value - 1],
-    )
+    rememberDatePatternFormatter("MMMdEEEE").format(date)
 
-private fun weekdayLabel(isoDay: Int): String = "週${WEEKDAY_LABELS[isoDay - 1]}"
+private fun weekdayLabel(isoDay: Int, locale: Locale): String =
+    DayOfWeek.of(isoDay).getDisplayName(TextStyle.SHORT, locale)
 
 private fun formatTokens(value: Long): String =
     String.format(Locale.getDefault(), "%,d", value)
@@ -1466,8 +1467,7 @@ private fun formatTokens(value: Long): String =
 private fun formatPercent(rate: Double): String =
     String.format(Locale.getDefault(), "%.1f%%", rate * 100)
 
+@Composable
 private fun formatSessionTime(millis: Long): String =
-    SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(Date(millis))
-
-private val TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm")
-private val WEEKDAY_LABELS = listOf("一", "二", "三", "四", "五", "六", "日")
+    rememberDatePatternFormatter("MMMdHm")
+        .format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))

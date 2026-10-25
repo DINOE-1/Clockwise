@@ -8,8 +8,12 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface AiChatSessionDao {
-    @Query("SELECT * FROM ai_chat_sessions ORDER BY updatedAt DESC")
-    fun observeAll(): Flow<List<AiChatSession>>
+    /**
+     * Lightweight session picker query: excludes the full JSON [AiChatSession.payload] column.
+     * Load a single full session with [getById] only when it is opened.
+     */
+    @Query("SELECT id, title, updatedAt, preview FROM ai_chat_sessions ORDER BY updatedAt DESC")
+    fun observeSummaries(): Flow<List<AiChatSessionSummary>>
 
     @Query("SELECT * FROM ai_chat_sessions ORDER BY updatedAt DESC LIMIT 1")
     suspend fun getLatest(): AiChatSession?

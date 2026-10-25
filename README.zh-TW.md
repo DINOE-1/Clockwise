@@ -102,6 +102,27 @@ sdk.dir=/path/to/Android/Sdk
 
 `local.properties` 已刻意列入 git 忽略。
 
+### 發布版建置
+
+發布版會透過 R8 縮減程式碼並縮減資源。只有在四項簽章設定都齊全時才會簽章；若缺少任一項，
+Gradle 會產生未簽章的 APK，讓沒有金鑰的環境仍可完成建置。
+
+```bash
+export KEYSTORE_FILE=/absolute/path/to/release.keystore
+export KEYSTORE_PASSWORD='...'
+export KEY_ALIAS='...'
+export KEY_PASSWORD='...'
+
+./gradlew :app:assembleRelease
+```
+
+`KEYSTORE_FILE` 可以是絕對路徑，也可以是相對於儲存庫根目錄的路徑。也可以改用同名 Gradle 屬性
+提供，例如寫在 `~/.gradle/gradle.properties`，或使用 `-PKEYSTORE_FILE=...`；屬性未提供時會讀取
+環境變數。請勿提交金鑰庫或其密碼（`.gitignore` 已排除 `*.jks`、`*.keystore` 與 `*.p12`）。
+
+有設定簽章時，APK 會輸出到 `app/build/outputs/apk/release/app-release.apk`；否則為
+`app/build/outputs/apk/release/app-release-unsigned.apk`。目前版本為 1.1.0（version code 2）。
+
 ## 執行
 
 連接裝置或模擬器後：
@@ -111,7 +132,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.dinoe.clockwise/.MainActivity
 ```
 
-Release 建置類型目前未簽章，且已停用程式碼縮減，因此僅適合本機測試。
+發布版會以 R8 縮減程式碼；簽章方式請見[發布版建置](#發布版建置)。偵錯版不需要任何簽章素材，
+建議用於本機測試。
 
 ## 測試
 
@@ -136,12 +158,23 @@ AI 助理為選用功能。沒有金鑰時，應用程式其他部分仍可正�
 
 ### 隱私與安全性
 
-- API 金鑰會以 Android Keystore 中的 AES-GCM 金鑰加密後存放。Keystore 金鑰無法匯出，也不會
-  由 Android 備份還原，因此還原備份後會再次要求輸入金鑰。
-- 對話文字、提示，以及回答所需的行程內容會直接傳送給你選擇的服務商。Clockwise 不會將資料
-  傳送到其他地方。
-- 對話與用量資料儲存在本機 Room 資料庫，不會上傳。
-- 刪除對話只會從本機資料庫移除，不會刪除服務商保留的內容。
+Clockwise 以本機資料為優先。行事曆活動、鬧鐘、標籤、設定、AI 對話與用量資料都存放在裝置上的
+Room 資料庫與 DataStore。Clockwise 沒有帳號、分析 SDK 或後端伺服器。
+
+- API 金鑰會以 Android Keystore 中的 AES-GCM 金鑰加密後存放。Keystore 金鑰無法匯出；金鑰明文
+  只在發出請求時存在於記憶體中。
+- 使用 AI 助理時，對話訊息、提示，以及回答所需的行程內容會以 HTTPS 直接傳送給你選擇的服務商，
+  金鑰會放在請求的 `Authorization` 標頭。這些資料受該服務商的隱私政策規範；Clockwise 不會代理
+  請求，也不會保留伺服器端副本。
+- 對話與用量資料只會存放在本機 Room 資料庫，不會上傳。
+- 已停用雲端備份與裝置間移轉：`allowBackup=false`、舊版完整備份已關閉，Android 12（API 31）
+  以上的資料擷取規則會排除所有網域。因此資料庫與加密後的金鑰內容不會透過 Android 備份離開
+  裝置。Keystore 金鑰無法匯出，即使複製了密文也無法在其他裝置解密。
+- 刪除對話只會從本機資料庫移除，不會刪除服務商保留的內容。解除安裝應用程式或清除應用程式資料
+  會永久刪除本機資料。
+- 遠端 AI 服務商應使用 HTTPS，讓 API 金鑰與對話內容在傳輸過程中保持加密。Clockwise 不會覆寫
+  Android 的網路安全政策；本機 HTTP 端點仍受平台的明文連線規則限制，區域網路服務可能需要
+  HTTPS 反向代理。
 
 ## 權限
 
@@ -172,7 +205,7 @@ app/src/main/kotlin/com/dinoe/clockwise/
 
 - **`ScheduleWriter`** 是鬧鐘與活動的唯一寫入路徑，供 UI 與 AI 助理共用，確保 AI 建立的項目
   與手動建立的一致。
-- **`AppDatabase`** 是 Room 資料庫（目前 schema 版本 8）。匯出的 schema 位於 `app/schemas/`；
+- **`AppDatabase`** 是 Room 資料庫（目前 schema 版本 9）。匯出的 schema 位於 `app/schemas/`；
   資料庫變更時請一併提交新的 schema 檔案。
 - **`AlarmScheduler`** 負責精確/非精確排程的備援與重新開機後的重排。
 - **`AiTools` / `AiToolParser`** 定義並驗證 function-calling 工具。寫入工具只會產生提案；
@@ -184,7 +217,9 @@ app/src/main/kotlin/com/dinoe/clockwise/
 歡迎提出 issue 與 pull request。開啟 PR 前：
 
 1. Kotlin 原始碼、註解與 commit 訊息請保持英文。
-2. 執行 `./gradlew :app:testDebugUnitTest` 與 `./gradlew :app:assembleDebug`。
+2. 執行 `./gradlew :app:testDebugUnitTest` 與 `./gradlew :app:assembleDebug`。CI
+   （`.github/workflows/android.yml`）也會在 push 與 pull request 時執行 `assembleDebug`、
+   `testDebugUnitTest` 與 `lintDebug`。
 3. 若變更資料庫，請新增 Room schema 檔案。
 4. 請勿提交 API 金鑰、簽章金鑰、`local.properties` 或建置產物。
 

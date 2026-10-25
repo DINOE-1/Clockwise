@@ -25,7 +25,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 val alarm = alarmDao.getById(alarmId)
 
                 if (!test && alarm == null) return@launch
-                if (!snooze && !test && alarm?.enabled != true) return@launch
+                if (!test && alarm?.enabled != true) return@launch
 
                 val name = alarm?.name
                     ?: intent.getStringExtra(AlarmScheduler.EXTRA_ALARM_NAME).orEmpty()
@@ -34,10 +34,24 @@ class AlarmReceiver : BroadcastReceiver() {
                 val time = alarm?.time
                     ?: intent.getIntExtra(AlarmScheduler.EXTRA_ALARM_TIME, 0)
 
-                val started = startAlarmService(appContext, alarmId, name, note, time)
-                if (started && !snooze && !test && alarm != null) {
-                    // A plain alarm fires once; switch it off until the user enables it again.
-                    alarmDao.update(alarm.copy(enabled = false))
+                // The snooze has now fired. Clear the persisted snooze before the service starts
+                // ringing so the service's one-shot disable can take effect. Without this the row
+                // would keep a stale non-null snoozedUntil forever.
+                if (snooze) alarmDao.clearSnooze(alarmId)
+
+                val started = startAlarmService(
+                    context = appContext,
+                    alarmId = alarmId,
+                    name = name,
+                    note = note,
+                    time = time,
+                    oneShot = !test,
+                    snooze = snooze,
+                )
+                if (!started && snooze && alarm != null) {
+                    // The foreground service was rejected; put the alarm back into a usable
+                    // state instead of leaving it enabled with no scheduled PendingIntent.
+                    AlarmScheduler.schedule(appContext, alarm.copy(snoozedUntil = null))
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Unable to start the alarm", e)
@@ -53,6 +67,8 @@ class AlarmReceiver : BroadcastReceiver() {
         name: String,
         note: String,
         time: Int,
+        oneShot: Boolean,
+        snooze: Boolean,
     ): Boolean {
         val serviceIntent = Intent(context, AlarmService::class.java).apply {
             action = AlarmService.ACTION_START
@@ -60,6 +76,8 @@ class AlarmReceiver : BroadcastReceiver() {
             putExtra(AlarmService.EXTRA_NAME, name)
             putExtra(AlarmService.EXTRA_NOTE, note)
             putExtra(AlarmService.EXTRA_TIME, time)
+            putExtra(AlarmScheduler.EXTRA_ONE_SHOT, oneShot)
+            putExtra(AlarmScheduler.EXTRA_SNOOZE, snooze)
         }
         return try {
             context.startForegroundService(serviceIntent)

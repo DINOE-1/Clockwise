@@ -56,4 +56,13 @@ interface TagDao {
 
     @Query("DELETE FROM alarm_tags WHERE tagId = :tagId")
     suspend fun deleteAlarmTagRefs(tagId: Long)
+
+    @Query("DELETE FROM event_tags")
+    suspend fun deleteAllEventTags()
+
+    @Query("DELETE FROM alarm_tags")
+    suspend fun deleteAllAlarmTags()
+
+    @Query("DELETE FROM tags")
+    suspend fun deleteAllTags()
 }

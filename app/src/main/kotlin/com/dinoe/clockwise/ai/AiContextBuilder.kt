@@ -10,11 +10,16 @@ data class BuiltContext(
 
 class AiContextOverflowException(
     val estimatedTokens: Int,
-) : Exception("Context exceeds the hard budget ($estimatedTokens tokens)")
+    val inputBudgetTokens: Int = AiTokenBudget.HARD_INPUT_TOKENS,
+) : Exception(
+    "Context uses $estimatedTokens tokens, over the $inputBudgetTokens-token input budget",
+)
 
 /**
  * Builds the request context in a cache-friendly order:
- * static system prompt -> compact completed turns -> current turn -> dynamic tail.
+ * static system prompt -> compact completed turns -> current turn (with the dynamic tail folded
+ * into a user message). A request never ends with a system message: dynamic context is either
+ * merged into the final user message or emitted as its own user message immediately before it.
  * Tool payloads from completed turns are never included.
  */
 class AiContextBuilder {
@@ -24,7 +29,8 @@ class AiContextBuilder {
         dynamicContext: String,
         staticPrompt: String = AiPrompt.STATIC_SYSTEM_PROMPT,
         toolDefinitions: JsonArray? = AiTools.definitions,
-        embedDynamicInLastUser: Boolean = false,
+        embedDynamicInLastUser: Boolean = true,
+        modelContextLength: Long? = null,
     ): BuiltContext {
         val keptTurns = ArrayDeque<CompletedTurn>()
         var historyTokens = 0
@@ -55,36 +61,72 @@ class AiContextBuilder {
                 reasoningContent = turn.reasoningContent,
             )
         }
-        if (embedDynamicInLastUser) {
-            val lastUserIndex = currentTurn.indexOfLast { it.role == ChatRole.USER }
-            currentTurn.forEachIndexed { index, message ->
-                if (index == lastUserIndex) {
-                    val merged = buildString {
-                        append(message.content.orEmpty())
-                        appendLine()
-                        appendLine()
-                        append(dynamic)
-                    }
-                    messages += message.copy(content = merged)
-                } else {
-                    messages += message
-                }
-            }
-        } else {
-            messages += currentTurn
-            messages += ChatMessage(role = ChatRole.SYSTEM, content = dynamic)
+        appendCurrentTurn(
+            messages = messages,
+            currentTurn = currentTurn,
+            dynamic = dynamic,
+            embedDynamicInLastUser = embedDynamicInLastUser,
+        )
+        // Defensive invariant: a caller-supplied system message must never be the last message.
+        if (messages.lastOrNull()?.role == ChatRole.SYSTEM) {
+            messages += ChatMessage(
+                role = ChatRole.USER,
+                content = dynamic.ifBlank { "Continue." },
+            )
         }
 
         val estimated = estimateMessages(messages) +
             (toolDefinitions?.let { AiTokenBudget.estimateTokens(it.toString()) } ?: 0)
-        if (estimated > AiTokenBudget.HARD_INPUT_TOKENS) {
-            throw AiContextOverflowException(estimated)
+        val hardInputTokens = AiTokenBudget.inputBudgetFor(modelContextLength)
+        if (estimated > hardInputTokens) {
+            throw AiContextOverflowException(estimated, hardInputTokens)
         }
         return BuiltContext(
             messages = messages,
             trimmed = keptTurns.size < completedTurns.size,
             estimatedInputTokens = estimated,
         )
+    }
+
+    private fun appendCurrentTurn(
+        messages: MutableList<ChatMessage>,
+        currentTurn: List<ChatMessage>,
+        dynamic: String,
+        embedDynamicInLastUser: Boolean,
+    ) {
+        val lastUserIndex = currentTurn.indexOfLast { it.role == ChatRole.USER }
+        if (lastUserIndex < 0) {
+            messages += currentTurn
+            messages += ChatMessage(role = ChatRole.USER, content = dynamic)
+            return
+        }
+        if (dynamic.isBlank()) {
+            messages += currentTurn
+            return
+        }
+        if (embedDynamicInLastUser) {
+            currentTurn.forEachIndexed { index, message ->
+                messages += if (index == lastUserIndex) {
+                    message.copy(
+                        content = buildString {
+                            append(message.content.orEmpty())
+                            appendLine()
+                            appendLine()
+                            append(dynamic)
+                        },
+                    )
+                } else {
+                    message
+                }
+            }
+        } else {
+            currentTurn.forEachIndexed { index, message ->
+                if (index == lastUserIndex) {
+                    messages += ChatMessage(role = ChatRole.USER, content = dynamic)
+                }
+                messages += message
+            }
+        }
     }
 
     fun estimateTurn(turn: CompletedTurn): Int =

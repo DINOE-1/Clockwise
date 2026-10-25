@@ -182,16 +182,16 @@ class OpenAiChatClientTest {
     }
 
     @Test
-    fun echoesReasoningContentOnEarlierAssistantMessages() = runTest {
+    fun deepSeekEchoesReasoningContentOnEarlierAssistantMessages() = runTest {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}""",
             ),
         )
         client.complete(
-            preset = AiProviders.commandCode.copy(baseUrl = baseUrl("/provider/v1")),
-            apiKey = "user_test",
-            model = "deepseek/deepseek-v4.1-flash",
+            preset = AiProviders.deepSeek.copy(baseUrl = baseUrl()),
+            apiKey = "sk-test",
+            model = "deepseek-flash",
             messages = listOf(
                 ChatMessage(ChatRole.USER, "first"),
                 ChatMessage(
@@ -212,16 +212,16 @@ class OpenAiChatClientTest {
     }
 
     @Test
-    fun fillsEmptyReasoningForMixedHistoriesWhenThinkingIsOn() = runTest {
+    fun deepSeekFillsEmptyReasoningForMixedHistoriesWhenThinkingIsOn() = runTest {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}""",
             ),
         )
         client.complete(
-            preset = AiProviders.commandCode.copy(baseUrl = baseUrl("/provider/v1")),
-            apiKey = "user_test",
-            model = "deepseek/deepseek-v4.1-flash",
+            preset = AiProviders.deepSeek.copy(baseUrl = baseUrl()),
+            apiKey = "sk-test",
+            model = "deepseek-flash",
             messages = listOf(
                 ChatMessage(ChatRole.USER, "first"),
                 ChatMessage(role = ChatRole.ASSISTANT, content = "old answer"),
@@ -233,6 +233,42 @@ class OpenAiChatClientTest {
         val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
         val messages = body["messages"]!!.jsonArray
         assertEquals("", messages[1].jsonObject["reasoning_content"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun nonDeepSeekProviderOmitsReasoningContentAndEmptyFallback() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}""",
+            ),
+        )
+        client.complete(
+            preset = AiProviders.commandCode.copy(baseUrl = baseUrl("/provider/v1")),
+            apiKey = "user_test",
+            model = "deepseek/deepseek-v4.1-flash",
+            messages = listOf(
+                ChatMessage(ChatRole.USER, "first"),
+                ChatMessage(
+                    role = ChatRole.ASSISTANT,
+                    content = "answer",
+                    reasoningContent = "because",
+                ),
+                ChatMessage(ChatRole.USER, "second"),
+                ChatMessage(role = ChatRole.ASSISTANT, content = "old answer"),
+                ChatMessage(ChatRole.USER, "third"),
+            ),
+            tools = AiTools.definitions,
+            reasoningEffort = AiReasoningEffort.LOW,
+        )
+        val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        val messages = body["messages"]!!.jsonArray
+        val assistants = messages
+            .map { it.jsonObject }
+            .filter { it["role"]!!.jsonPrimitive.content == "assistant" }
+        assertEquals(2, assistants.size)
+        assertTrue(assistants.none { it.containsKey("reasoning_content") })
+        assertEquals("answer", assistants[0]["content"]!!.jsonPrimitive.content)
+        assertEquals("old answer", assistants[1]["content"]!!.jsonPrimitive.content)
     }
 
     @Test

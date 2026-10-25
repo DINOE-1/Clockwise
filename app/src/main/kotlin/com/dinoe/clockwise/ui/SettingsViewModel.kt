@@ -5,14 +5,20 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dinoe.clockwise.ClockwiseApp
 import com.dinoe.clockwise.ai.AiConfig
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = ThemePreferences(application)
+    private val languagePreferences = LanguagePreferences(application)
     private val aiRepository = (application as ClockwiseApp).aiRepository
+
+    private val _language = MutableStateFlow(languagePreferences.language)
+    val language: StateFlow<AppLanguage> = _language.asStateFlow()
 
     val themeMode: StateFlow<ThemeMode> = preferences.mode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ThemeMode.SYSTEM)
@@ -45,6 +51,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             preferences.setMode(mode)
         }
+    }
+
+    fun setLanguage(language: AppLanguage) {
+        languagePreferences.setLanguage(language)
+        _language.value = language
     }
 
     fun setSnapInterval(minutes: Int) {

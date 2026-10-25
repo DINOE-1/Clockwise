@@ -1,0 +1,4 @@
+<resources>
+    <!-- Dark counterpart of the platform theme; app colors come from Compose. -->
+    <style name="Theme.Clockwise" parent="android:Theme.Material.NoActionBar" />
+</resources>

@@ -70,8 +70,8 @@ import com.dinoe.clockwise.ai.AiProviderConfig
 import com.dinoe.clockwise.ai.AiProviderId
 import com.dinoe.clockwise.ai.AiReasoningEffort
 import com.dinoe.clockwise.ai.AiProviders
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -875,5 +875,7 @@ private fun formatContext(value: Long): String = when {
     else -> value.toString()
 }
 
+@Composable
 private fun formatTimestamp(millis: Long): String =
-    SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date(millis))
+    rememberDatePatternFormatter("yMMMdHm")
+        .format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))

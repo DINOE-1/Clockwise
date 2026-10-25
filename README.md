@@ -107,6 +107,30 @@ sdk.dir=/path/to/Android/Sdk
 
 `local.properties` is intentionally git-ignored.
 
+### Release build
+
+Release builds are minified and resource-shrunk with R8. They are signed only when all four signing
+values are present; without them Gradle produces an unsigned APK so the build still works without
+secrets.
+
+```bash
+export KEYSTORE_FILE=/absolute/path/to/release.keystore
+export KEYSTORE_PASSWORD='...'
+export KEY_ALIAS='...'
+export KEY_PASSWORD='...'
+
+./gradlew :app:assembleRelease
+```
+
+`KEYSTORE_FILE` may be absolute or relative to the repository root. The same names can be supplied
+as Gradle properties instead, for example in `~/.gradle/gradle.properties` or with
+`-PKEYSTORE_FILE=...`; the environment is used when a property is absent. Never commit a keystore or
+its passwords (`.gitignore` excludes `*.jks`, `*.keystore`, and `*.p12`).
+
+When signing is configured the APK is written to
+`app/build/outputs/apk/release/app-release.apk`; otherwise it is
+`app/build/outputs/apk/release/app-release-unsigned.apk`. This is version 1.1.0 (version code 2).
+
 ## Run
 
 With a device or emulator connected:
@@ -116,8 +140,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.dinoe.clockwise/.MainActivity
 ```
 
-The release build type is currently unsigned and has minification disabled, so it is only suitable
-for local testing.
+Release builds are minified with R8; see [Release build](#release-build) for signing. Debug builds
+need no signing material and are the recommended way to test locally.
 
 ## Tests
 
@@ -142,14 +166,26 @@ The assistant is optional. Without a key, the rest of the app works normally.
 
 ### Privacy and security
 
+Clockwise is local-first. Calendar events, alarms, tags, settings, AI conversations, and usage data
+are stored in a Room database and DataStore on the device. There is no Clockwise account, analytics
+SDK, or backend server.
+
 - API keys are encrypted at rest with an AES-GCM key held in the Android Keystore. The Keystore key
-  is not exportable and is not restored by Android backup, so a restored backup will ask for the key
-  again.
-- Chat text, prompts, and the schedule context needed to answer are sent directly to the provider
-  you select. Nothing is sent anywhere else by Clockwise.
-- Conversations and usage data are stored in the local Room database and are not uploaded.
+  is non-exportable; the plaintext key exists in memory only while a request is being made.
+- When you use the assistant, the chat messages, prompts, and the schedule context needed to answer
+  are sent directly to the provider you selected over HTTPS, with the key in the request's
+  `Authorization` header. That data is governed by the provider's privacy policy. Clockwise does not
+  proxy requests or keep a server-side copy.
+- Conversations and usage data are stored only in the local Room database and are not uploaded.
+- Cloud backup and device-to-device migration are disabled: `allowBackup=false`, legacy full backup
+  is off, and the Android 12+ (API 31) extraction rules exclude every domain. The database and the
+  encrypted key blobs therefore never leave the device through Android backup. Because the Keystore
+  key is non-exportable, copied ciphertext could not be decrypted elsewhere anyway.
 - Deleting a conversation removes it from the local database; it does not delete anything held by
-  the provider.
+  the provider. Uninstalling the app or clearing its data permanently deletes local data.
+- Remote AI providers should use HTTPS so API keys and chat content are encrypted in transit.
+  Clockwise does not override Android's network-security policy; local HTTP endpoints remain subject
+  to the platform's cleartext rules, and a LAN provider may need an HTTPS reverse proxy.
 
 ## Permissions
 
@@ -180,7 +216,7 @@ app/src/main/kotlin/com/dinoe/clockwise/
 
 - **`ScheduleWriter`** is the single write path for alarms and events, used by both the UI and the
   AI assistant. This keeps AI-created items consistent with manually created ones.
-- **`AppDatabase`** is the Room database (currently schema version 8). Exported schemas live in
+- **`AppDatabase`** is the Room database (currently schema version 9). Exported schemas live in
   `app/schemas/`; commit new schema files whenever the database changes.
 - **`AlarmScheduler`** owns exact/inexact scheduling fallbacks and reboot rescheduling.
 - **`AiTools` / `AiToolParser`** define and validate the function-calling tools. Write tools only
@@ -192,7 +228,9 @@ app/src/main/kotlin/com/dinoe/clockwise/
 Issues and pull requests are welcome. Before opening a PR:
 
 1. Keep Kotlin source, comments, and commit messages in English.
-2. Run `./gradlew :app:testDebugUnitTest` and `./gradlew :app:assembleDebug`.
+2. Run `./gradlew :app:testDebugUnitTest` and `./gradlew :app:assembleDebug`. CI
+   (`.github/workflows/android.yml`) also runs `assembleDebug`, `testDebugUnitTest`, and `lintDebug`
+   on pushes and pull requests.
 3. Add a Room schema file if you change the database.
 4. Do not commit API keys, signing keys, `local.properties`, or build output.
 

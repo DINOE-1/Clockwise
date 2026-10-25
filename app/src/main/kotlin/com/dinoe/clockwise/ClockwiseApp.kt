@@ -3,7 +3,6 @@ package com.dinoe.clockwise
 import android.app.Application
 import com.dinoe.clockwise.ai.AiRepository
 import com.dinoe.clockwise.alarm.AlarmNotifier
-import com.dinoe.clockwise.alarm.AlarmScheduler
 import com.dinoe.clockwise.data.AppDatabase
 import com.dinoe.clockwise.data.ScheduleWriter
 import kotlinx.coroutines.CoroutineScope
@@ -18,8 +17,11 @@ class ClockwiseApp : Application() {
     override fun onCreate() {
         super.onCreate()
         AlarmNotifier.createChannel(this)
+        // Do not reschedule alarms here. A process can start because an alarm is firing; doing a
+        // restore at that moment races the receiver and can disable the alarm that is about to
+        // ring. BootReceiver handles boot, package updates, and clock/time-zone changes instead.
         CoroutineScope(Dispatchers.IO).launch {
-            AlarmScheduler.rescheduleAllEnabled(this@ClockwiseApp)
+            runCatching { scheduleWriter.repairOrphanedAlarms() }
         }
     }
 }

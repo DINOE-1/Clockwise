@@ -22,12 +22,16 @@ data class AlarmPermissionStatus(
     val alarmVolumeZero: Boolean,
     val isVivo: Boolean,
     val vivoWakeScreenOff: Boolean?,
+    val channelBlocked: Boolean = false,
+    val dndActive: Boolean = false,
 ) {
     val hasCriticalMissing: Boolean
-        get() = !notificationsGranted || !exactAlarmsGranted || !fullScreenIntentGranted
+        get() = !notificationsGranted || !exactAlarmsGranted ||
+            !fullScreenIntentGranted || channelBlocked
 
     val hasAnyIssue: Boolean
-        get() = hasCriticalMissing || alarmVolumeZero || (isVivo && !batteryOptimizationIgnored)
+        get() = hasCriticalMissing || alarmVolumeZero || dndActive ||
+            (isVivo && !batteryOptimizationIgnored)
 }
 
 object AlarmPermissions {
@@ -55,6 +59,13 @@ object AlarmPermissions {
             context.getSystemService(AudioManager::class.java)
                 .getStreamVolume(AudioManager.STREAM_ALARM) == 0
 
+        val channel = notificationManager.getNotificationChannel(AlarmNotifier.CHANNEL_ID)
+        val channelBlocked = channel != null &&
+            (channel.importance == NotificationManager.IMPORTANCE_NONE ||
+                channel.importance < NotificationManager.IMPORTANCE_HIGH)
+        val dndActive = notificationManager.currentInterruptionFilter !=
+            NotificationManager.INTERRUPTION_FILTER_ALL
+
         val vivo = isVivo()
         return AlarmPermissionStatus(
             notificationsGranted = notificationsGranted,
@@ -69,6 +80,8 @@ object AlarmPermissions {
             } else {
                 null
             },
+            channelBlocked = channelBlocked,
+            dndActive = dndActive,
         )
     }
 

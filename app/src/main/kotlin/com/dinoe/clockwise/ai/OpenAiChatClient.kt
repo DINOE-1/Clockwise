@@ -102,7 +102,16 @@ class OpenAiChatClient(
         }
         val body = buildJsonObject {
             put("model", model)
-            put("messages", buildMessages(messages, reasoningEffort != AiReasoningEffort.OFF))
+            put(
+                "messages",
+                buildMessages(
+                    messages = messages,
+                    includeReasoningFallback = reasoningEffort != AiReasoningEffort.OFF,
+                    // reasoning_content is a DeepSeek extension; other OpenAI-compatible
+                    // providers reject or ignore it, so never serialize it for them.
+                    includeReasoningContent = preset.id == AiProviderId.DEEPSEEK,
+                ),
+            )
             if (tools != null && tools.isNotEmpty()) {
                 put("tools", tools)
                 put("tool_choice", "auto")
@@ -154,6 +163,7 @@ class OpenAiChatClient(
     private fun buildMessages(
         messages: List<ChatMessage>,
         includeReasoningFallback: Boolean,
+        includeReasoningContent: Boolean,
     ): JsonArray = buildJsonArray {
         messages.forEach { message ->
             add(
@@ -164,7 +174,7 @@ class OpenAiChatClient(
                         put("content", message.content ?: "")
                     } else {
                         put("content", message.content ?: "")
-                        if (message.role == ChatRole.ASSISTANT) {
+                        if (message.role == ChatRole.ASSISTANT && includeReasoningContent) {
                             val reasoning = message.reasoningContent
                             when {
                                 !reasoning.isNullOrEmpty() -> put("reasoning_content", reasoning)

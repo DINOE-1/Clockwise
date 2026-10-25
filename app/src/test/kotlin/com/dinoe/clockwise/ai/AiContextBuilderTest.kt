@@ -19,7 +19,7 @@ class AiContextBuilderTest {
     }
 
     @Test
-    fun buildsStaticThenTurnsThenDynamicTail() {
+    fun buildsStaticThenTurnsThenDynamicInTheFinalUserMessage() {
         val completed = listOf(
             CompletedTurn(user = "hello", assistant = "hi"),
             CompletedTurn(user = "again", assistant = "sure"),
@@ -32,13 +32,78 @@ class AiContextBuilderTest {
         )
         assertEquals(ChatRole.SYSTEM, built.messages.first().role)
         assertEquals(AiPrompt.STATIC_SYSTEM_PROMPT, built.messages.first().content)
-        assertEquals(ChatRole.SYSTEM, built.messages.last().role)
-        assertTrue(built.messages.last().content!!.startsWith("CURRENT CONTEXT"))
+        assertEquals(ChatRole.USER, built.messages.last().role)
+        assertTrue(built.messages.last().content!!.startsWith("create alarms"))
+        assertTrue(built.messages.last().content!!.contains("CURRENT CONTEXT"))
+        assertTrue(built.messages.none { it.role == ChatRole.SYSTEM && it != built.messages.first() })
         assertEquals(
             listOf(ChatRole.USER, ChatRole.ASSISTANT, ChatRole.USER, ChatRole.ASSISTANT, ChatRole.USER),
-            built.messages.subList(1, built.messages.size - 1).map { it.role },
+            built.messages.subList(1, built.messages.size).map { it.role },
         )
         assertTrue(!built.trimmed)
+    }
+
+    @Test
+    fun separateDynamicUserMessageComesImmediatelyBeforeTheFinalUserMessage() {
+        val current = listOf(
+            ChatMessage(ChatRole.USER, "one"),
+            ChatMessage(ChatRole.ASSISTANT, "ok"),
+            ChatMessage(ChatRole.USER, "two"),
+        )
+        val built = builder.build(
+            completedTurns = emptyList(),
+            currentTurn = current,
+            dynamicContext = "CURRENT CONTEXT now",
+            embedDynamicInLastUser = false,
+        )
+        assertTrue(built.messages.none { it.role == ChatRole.SYSTEM && it != built.messages.first() })
+        assertEquals(ChatRole.USER, built.messages.last().role)
+        assertEquals("two", built.messages.last().content)
+        val dynamicMessage = built.messages[built.messages.lastIndex - 1]
+        assertEquals(ChatRole.USER, dynamicMessage.role)
+        assertTrue(dynamicMessage.content!!.startsWith("CURRENT CONTEXT"))
+        assertEquals(
+            listOf(ChatRole.USER, ChatRole.ASSISTANT, ChatRole.USER, ChatRole.USER),
+            built.messages.subList(1, built.messages.size).map { it.role },
+        )
+    }
+
+    @Test
+    fun dynamicContextMergesIntoTheLastUserMessageOfAToolRound() {
+        val current = listOf(
+            ChatMessage(ChatRole.USER, "create alarms"),
+            ChatMessage(
+                role = ChatRole.ASSISTANT,
+                content = null,
+                toolCalls = listOf(
+                    ChatToolCall(id = "call-1", name = AiTools.CREATE_ALARMS, arguments = "{}"),
+                ),
+            ),
+            ChatMessage(role = ChatRole.TOOL, content = "ok", toolCallId = "call-1"),
+        )
+        val built = builder.build(
+            completedTurns = emptyList(),
+            currentTurn = current,
+            dynamicContext = "CURRENT CONTEXT now",
+        )
+        assertEquals(ChatRole.TOOL, built.messages.last().role)
+        assertTrue(built.messages.none { it.role == ChatRole.SYSTEM && it != built.messages.first() })
+        val user = built.messages.first { it.role == ChatRole.USER }
+        val userContent = user.content!!
+        assertTrue(userContent.contains("create alarms"))
+        assertTrue(userContent.contains("CURRENT CONTEXT"))
+    }
+
+    @Test
+    fun addsADynamicUserMessageWhenTheCurrentTurnHasNoUserMessage() {
+        val built = builder.build(
+            completedTurns = emptyList(),
+            currentTurn = listOf(ChatMessage(ChatRole.ASSISTANT, "orphan")),
+            dynamicContext = "CURRENT CONTEXT now",
+        )
+        assertEquals(ChatRole.USER, built.messages.last().role)
+        assertTrue(built.messages.last().content!!.contains("CURRENT CONTEXT"))
+        assertTrue(built.messages.none { it.role == ChatRole.SYSTEM && it != built.messages.first() })
     }
 
     @Test
@@ -66,10 +131,10 @@ class AiContextBuilderTest {
             dynamicContext = "ctx",
         )
         assertTrue(built.trimmed)
-        val completedMessages = built.messages.count {
-            it.role == ChatRole.USER && it.content != "now"
+        val keptHistory = built.messages.count {
+            it.role == ChatRole.USER && it.content?.endsWith("x") == true
         }
-        assertTrue(completedMessages < 6)
+        assertTrue(keptHistory in 1..5)
     }
 
     @Test
@@ -115,6 +180,66 @@ class AiContextBuilderTest {
             fail("Expected AiContextOverflowException")
         } catch (_: AiContextOverflowException) {
             // expected
+        }
+    }
+
+    @Test
+    fun largeModelContextRaisesTheHardCap() {
+        val huge = "x".repeat(60_000)
+        try {
+            builder.build(
+                completedTurns = emptyList(),
+                currentTurn = listOf(ChatMessage(ChatRole.USER, huge)),
+                dynamicContext = "ctx",
+            )
+            fail("Expected the default budget to reject the request")
+        } catch (_: AiContextOverflowException) {
+            // expected: the 60k-character turn is larger than the default 12k cap
+        }
+        val built = builder.build(
+            completedTurns = emptyList(),
+            currentTurn = listOf(ChatMessage(ChatRole.USER, huge)),
+            dynamicContext = "ctx",
+            modelContextLength = 1_000_000,
+        )
+        assertTrue(built.estimatedInputTokens > AiTokenBudget.HARD_INPUT_TOKENS)
+        assertEquals(ChatRole.USER, built.messages.last().role)
+    }
+
+    @Test
+    fun smallModelContextLowersTheHardCap() {
+        val content = "x".repeat(20_000)
+        builder.build(
+            completedTurns = emptyList(),
+            currentTurn = listOf(ChatMessage(ChatRole.USER, content)),
+            dynamicContext = "ctx",
+        )
+        try {
+            builder.build(
+                completedTurns = emptyList(),
+                currentTurn = listOf(ChatMessage(ChatRole.USER, content)),
+                dynamicContext = "ctx",
+                modelContextLength = 8_192,
+            )
+            fail("Expected AiContextOverflowException for the smaller model context")
+        } catch (_: AiContextOverflowException) {
+            // expected: output reserve leaves less input room than the default budget
+        }
+    }
+
+    @Test
+    fun hugeModelContextIsStillCapped() {
+        val enormous = "x".repeat(200_000)
+        try {
+            builder.build(
+                completedTurns = emptyList(),
+                currentTurn = listOf(ChatMessage(ChatRole.USER, enormous)),
+                dynamicContext = "ctx",
+                modelContextLength = 1_000_000,
+            )
+            fail("Expected AiContextOverflowException for the derived cap")
+        } catch (e: AiContextOverflowException) {
+            assertTrue(e.estimatedTokens > AiTokenBudget.MAX_DERIVED_INPUT_TOKENS)
         }
     }
 }

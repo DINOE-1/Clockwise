@@ -7,8 +7,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
 import com.dinoe.clockwise.ClockwiseApp
 import com.dinoe.clockwise.R
+import com.dinoe.clockwise.alarm.AlarmScheduler
 import com.dinoe.clockwise.ai.AiApiException
 import com.dinoe.clockwise.ai.AiChatItem
 import com.dinoe.clockwise.ai.AiChatSessionCodec
@@ -49,10 +51,10 @@ import com.dinoe.clockwise.data.Tag
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -82,17 +84,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     private val eventDao = app.database.eventDao()
     private val chatSessionDao = app.database.chatSessionDao()
 
-    val sessions: StateFlow<List<AiChatSessionSummary>> = chatSessionDao.observeAll()
-        .map { rows ->
-            rows.map { row ->
-                AiChatSessionSummary(
-                    id = row.id,
-                    title = row.title,
-                    updatedAt = row.updatedAt,
-                    preview = row.preview,
-                )
-            }
-        }
+    val sessions: StateFlow<List<AiChatSessionSummary>> = chatSessionDao.observeSummaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val items = mutableStateListOf<AiChatItem>()
@@ -561,10 +553,14 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                 tags = tags.map { it.name },
                 actions = chatSession.actionLines,
             )
+            val modelContextLength = provider.models
+                .firstOrNull { it.id == provider.modelId }
+                ?.contextLength
             val built = contextBuilder.build(
                 completedTurns = chatSession.completedTurns,
                 currentTurn = currentTurn,
                 dynamicContext = dynamic,
+                modelContextLength = modelContextLength,
             )
             if (built.trimmed && !trimNoticeShown) {
                 addNotice(app.getString(R.string.ai_history_trimmed))
@@ -572,10 +568,18 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             statusText = app.getString(R.string.ai_status_thinking)
+            // Do not ask a small-context model for 4096 output tokens; that combination can
+            // exceed its context even when the input budget is respected.
+            val maxOutputTokens = modelContextLength?.let { context ->
+                (context - built.estimatedInputTokens - 256L)
+                    .coerceIn(256L, 4_096L)
+                    .toInt()
+            } ?: 4_096
             val completion = repository.complete(
                 provider = provider,
                 messages = built.messages,
                 tools = AiTools.definitions,
+                maxTokens = maxOutputTokens,
             )
             recordUsage(completion.usage)
 
@@ -904,171 +908,192 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun executePending(pending: PendingWrite): ExecutionResult =
         withContext(Dispatchers.IO) {
-            var createdPlainAlarms = 0
-            var createdEventAlarms = 0
-            var createdEvents = 0
-            var updatedAlarms = 0
-            var updatedEvents = 0
-            var deletedAlarms = 0
-            var deletedEvents = 0
-            var scheduledAlarms = 0
-            var unscheduledAlarms = 0
-            var failed = 0
-            val notes = mutableListOf<String>()
+            // Resolve every referenced row before the first write. A stale id must abort the whole
+            // proposal instead of producing a partial result built by runCatching.
+            val alarmUpdates = pending.alarmUpdates.map { draft ->
+                val alarm = alarmDao.getById(draft.alarmId)
+                    ?: error("alarm ${draft.alarmId} no longer exists")
+                draft to alarm
+            }
+            val alarmDeletes = pending.alarmDeletes.map { draft ->
+                val alarm = alarmDao.getById(draft.alarmId)
+                    ?: error("alarm ${draft.alarmId} no longer exists")
+                draft to alarm
+            }
+            val eventUpdates = pending.eventUpdates.map { draft ->
+                val event = eventDao.getById(draft.eventId)
+                    ?: error("event ${draft.eventId} no longer exists")
+                draft to event
+            }
+            val eventDeletes = pending.eventDeletes.map { draft ->
+                val event = eventDao.getById(draft.eventId)
+                    ?: error("event ${draft.eventId} no longer exists")
+                draft to event
+            }
 
-            pending.alarms.forEach { draft ->
-                runCatching {
-                    writer.addAlarm(
-                        time = draft.time.toSecondOfDay(),
-                        fireDate = draft.date?.toEpochDay(),
-                        name = draft.name,
-                        note = draft.note,
-                        tags = draft.tags.map { Tag(id = it.id, name = it.name) },
-                    )
-                }.onSuccess { creation ->
-                    createdPlainAlarms++
-                    if (creation.scheduled) scheduledAlarms++ else unscheduledAlarms++
-                    if (notes.size < 5) {
-                        notes += if (draft.date != null) {
-                            "created ${draft.date} ${draft.time} ${draft.name}".trim()
-                        } else {
-                            "created ${draft.time} next ${draft.name}".trim()
+            val result = try {
+                // One outer transaction makes every row change all-or-nothing. ScheduleWriter's
+                // nested withTransaction calls join this transaction; alarm scheduling side
+                // effects are restored below if the outer transaction fails.
+                app.database.withTransaction {
+                    var createdPlainAlarms = 0
+                    var createdEventAlarms = 0
+                    var createdEvents = 0
+                    var updatedAlarms = 0
+                    var updatedEvents = 0
+                    var deletedAlarms = 0
+                    var deletedEvents = 0
+                    var scheduledAlarms = 0
+                    var unscheduledAlarms = 0
+                    val notes = mutableListOf<String>()
+
+                    pending.alarms.forEach { draft ->
+                        val creation = writer.addAlarm(
+                            time = draft.time.toSecondOfDay(),
+                            fireDate = draft.date?.toEpochDay(),
+                            name = draft.name,
+                            note = draft.note,
+                            tags = draft.tags.map { Tag(id = it.id, name = it.name) },
+                        )
+                        createdPlainAlarms++
+                        if (creation.scheduled) scheduledAlarms++ else unscheduledAlarms++
+                        if (notes.size < 5) {
+                            notes += if (draft.date != null) {
+                                "created ${draft.date} ${draft.time} ${draft.name}".trim()
+                            } else {
+                                "created ${draft.time} next ${draft.name}".trim()
+                            }
                         }
                     }
-                }.onFailure { failed++ }
-            }
 
-            pending.events.forEach { draft ->
-                runCatching {
-                    writer.addEvent(
-                        title = draft.title,
-                        note = draft.note,
-                        date = draft.date,
-                        start = draft.start,
-                        end = draft.end,
-                        withAlarm = draft.withAlarm,
-                        tags = draft.tags.map { Tag(id = it.id, name = it.name) },
-                        repeat = draft.recurrenceRule(),
-                    )
-                }.onSuccess { creation ->
-                    createdEvents += creation.events.size
-                    createdEventAlarms += creation.alarms.size
-                    scheduledAlarms += creation.alarms.count { it.scheduled }
-                    unscheduledAlarms += creation.alarms.count { !it.scheduled }
-                }.onFailure { failed++ }
-            }
-
-            pending.alarmUpdates.forEach { draft ->
-                runCatching {
-                    val alarm = alarmDao.getById(draft.alarmId)
-                        ?: error("alarm ${draft.alarmId} no longer exists")
-                    writer.updateAlarm(
-                        alarm = alarm,
-                        time = draft.time.toSecondOfDay(),
-                        fireDate = draft.fireDate?.toEpochDay(),
-                        name = draft.name,
-                        note = draft.note,
-                        enabled = draft.enabled,
-                        tags = draft.tags.map { Tag(id = it.id, name = it.name) },
-                    )
-                }.onSuccess { creation ->
-                    updatedAlarms++
-                    if (creation.alarm.enabled) {
-                        if (creation.scheduled) scheduledAlarms++ else unscheduledAlarms++
+                    pending.events.forEach { draft ->
+                        val creation = writer.addEvent(
+                            title = draft.title,
+                            note = draft.note,
+                            date = draft.date,
+                            start = draft.start,
+                            end = draft.end,
+                            withAlarm = draft.withAlarm,
+                            tags = draft.tags.map { Tag(id = it.id, name = it.name) },
+                            repeat = draft.recurrenceRule(),
+                        )
+                        createdEvents += creation.events.size
+                        createdEventAlarms += creation.alarms.size
+                        scheduledAlarms += creation.alarms.count { it.scheduled }
+                        unscheduledAlarms += creation.alarms.count { !it.scheduled }
                     }
-                    if (notes.size < 5) notes += "updated alarm ${draft.time} ${draft.name}".trim()
-                }.onFailure { failed++ }
-            }
 
-            pending.alarmDeletes.forEach { draft ->
-                runCatching {
-                    val alarm = alarmDao.getById(draft.alarmId)
-                        ?: error("alarm ${draft.alarmId} no longer exists")
-                    writer.deleteAlarm(alarm)
-                }.onSuccess {
-                    deletedAlarms++
-                    if (notes.size < 5) notes += "deleted alarm ${draft.time} ${draft.name}".trim()
-                }.onFailure { failed++ }
-            }
+                    alarmUpdates.forEach { (draft, alarm) ->
+                        val creation = writer.updateAlarm(
+                            alarm = alarm,
+                            time = draft.time.toSecondOfDay(),
+                            fireDate = draft.fireDate?.toEpochDay(),
+                            name = draft.name,
+                            note = draft.note,
+                            enabled = draft.enabled,
+                            tags = draft.tags.map { Tag(id = it.id, name = it.name) },
+                        )
+                        updatedAlarms++
+                        if (creation.alarm.enabled) {
+                            if (creation.scheduled) scheduledAlarms++ else unscheduledAlarms++
+                        }
+                        if (notes.size < 5) {
+                            notes += "updated alarm ${draft.time} ${draft.name}".trim()
+                        }
+                    }
 
-            pending.eventUpdates.forEach { draft ->
-                runCatching {
-                    val event = eventDao.getById(draft.eventId)
-                        ?: error("event ${draft.eventId} no longer exists")
-                    writer.updateEventScoped(
-                        event = event,
-                        scope = draft.scope,
-                        title = draft.title,
-                        note = draft.note,
-                        date = draft.date,
-                        start = draft.start,
-                        end = draft.end,
-                        withAlarm = draft.withAlarm,
-                        tags = draft.tags.map { Tag(id = it.id, name = it.name) },
+                    alarmDeletes.forEach { (draft, alarm) ->
+                        writer.deleteAlarm(alarm)
+                        deletedAlarms++
+                        if (notes.size < 5) {
+                            notes += "deleted alarm ${draft.time} ${draft.name}".trim()
+                        }
+                    }
+
+                    eventUpdates.forEach { (draft, event) ->
+                        val mutation = writer.updateEventScoped(
+                            event = event,
+                            scope = draft.scope,
+                            title = draft.title,
+                            note = draft.note,
+                            date = draft.date,
+                            start = draft.start,
+                            end = draft.end,
+                            withAlarm = draft.withAlarm,
+                            tags = draft.tags.map { Tag(id = it.id, name = it.name) },
+                        )
+                        updatedEvents += mutation.affectedEvents
+                        deletedAlarms += mutation.deletedAlarms
+                        scheduledAlarms += mutation.scheduledAlarms
+                        unscheduledAlarms += mutation.unscheduledAlarms
+                        if (notes.size < 5) notes += "updated event ${draft.title}".trim()
+                    }
+
+                    eventDeletes.forEach { (draft, event) ->
+                        val mutation = writer.deleteEventScoped(
+                            event = event,
+                            scope = draft.scope,
+                            deleteAlarms = !draft.keepAlarms,
+                        )
+                        deletedEvents += mutation.affectedEvents
+                        deletedAlarms += mutation.deletedAlarms
+                        if (notes.size < 5) notes += "deleted event ${draft.title}".trim()
+                    }
+
+                    val totalCreatedAlarms = createdPlainAlarms + createdEventAlarms
+                    val actionLine = buildString {
+                        append("created ")
+                        append(totalCreatedAlarms)
+                        append(" alarms, ")
+                        append(createdEvents)
+                        append(" events; updated ")
+                        append(updatedAlarms)
+                        append(" alarms, ")
+                        append(updatedEvents)
+                        append(" events; deleted ")
+                        append(deletedAlarms)
+                        append(" alarms, ")
+                        append(deletedEvents)
+                        append(" events")
+                        if (notes.isNotEmpty()) {
+                            append(": ")
+                            append(notes.joinToString("; "))
+                        }
+                    }
+                    ExecutionResult(
+                        createdAlarms = totalCreatedAlarms,
+                        createdEvents = createdEvents,
+                        updatedAlarms = updatedAlarms,
+                        updatedEvents = updatedEvents,
+                        deletedAlarms = deletedAlarms,
+                        deletedEvents = deletedEvents,
+                        unscheduledAlarms = unscheduledAlarms,
+                        failed = 0,
+                        actionLine = actionLine,
                     )
-                }.onSuccess { mutation ->
-                    updatedEvents += mutation.affectedEvents
-                    deletedAlarms += mutation.deletedAlarms
-                    scheduledAlarms += mutation.scheduledAlarms
-                    unscheduledAlarms += mutation.unscheduledAlarms
-                    if (notes.size < 5) notes += "updated event ${draft.title}".trim()
-                }.onFailure { failed++ }
-            }
-
-            pending.eventDeletes.forEach { draft ->
-                runCatching {
-                    val event = eventDao.getById(draft.eventId)
-                        ?: error("event ${draft.eventId} no longer exists")
-                    val mutation = writer.deleteEventScoped(
-                        event = event,
-                        scope = draft.scope,
-                        deleteAlarms = !draft.keepAlarms,
-                    )
-                    mutation
-                }.onSuccess { mutation ->
-                    deletedEvents += mutation.affectedEvents
-                    deletedAlarms += mutation.deletedAlarms
-                    if (notes.size < 5) notes += "deleted event ${draft.title}".trim()
-                }.onFailure { failed++ }
-            }
-
-            val totalCreatedAlarms = createdPlainAlarms + createdEventAlarms
-            val actionLine = buildString {
-                append("created ")
-                append(totalCreatedAlarms)
-                append(" alarms, ")
-                append(createdEvents)
-                append(" events; updated ")
-                append(updatedAlarms)
-                append(" alarms, ")
-                append(updatedEvents)
-                append(" events; deleted ")
-                append(deletedAlarms)
-                append(" alarms, ")
-                append(deletedEvents)
-                append(" events")
-                if (failed > 0) {
-                    append("; ")
-                    append(failed)
-                    append(" failed")
                 }
-                if (notes.isNotEmpty()) {
-                    append(": ")
-                    append(notes.joinToString("; "))
-                }
+            } catch (e: CancellationException) {
+                withContext(NonCancellable) { restoreAlarmsAfterFailedProposal() }
+                throw e
+            } catch (e: Exception) {
+                restoreAlarmsAfterFailedProposal()
+                throw e
             }
-            ExecutionResult(
-                createdAlarms = totalCreatedAlarms,
-                createdEvents = createdEvents,
-                updatedAlarms = updatedAlarms,
-                updatedEvents = updatedEvents,
-                deletedAlarms = deletedAlarms,
-                deletedEvents = deletedEvents,
-                unscheduledAlarms = unscheduledAlarms,
-                failed = failed,
-                actionLine = actionLine,
-            )
+            result
         }
+
+    /**
+     * A failed proposal rolls the database back, but AlarmManager calls made inside the
+     * transaction are not transactional. Cancel and rebuild every system alarm from the restored
+     * rows so a stale PendingIntent cannot ring with pre-rollback data.
+     */
+    private suspend fun restoreAlarmsAfterFailedProposal() {
+        runCatching {
+            val alarms = alarmDao.getAll()
+            alarms.forEach { alarm -> AlarmScheduler.cancelPending(app, alarm) }
+            AlarmScheduler.rescheduleAllEnabled(app)
+        }
+    }
 
     private fun summarize(result: ExecutionResult): String {
         val parts = mutableListOf<String>()

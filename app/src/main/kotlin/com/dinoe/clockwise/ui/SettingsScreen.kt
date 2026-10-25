@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -70,6 +71,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dinoe.clockwise.R
 import com.dinoe.clockwise.alarm.AlarmPermissions
 import com.dinoe.clockwise.alarm.AlarmScheduler
+import com.dinoe.clockwise.alarm.ScheduleResult
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,6 +94,7 @@ fun SettingsScreen(
     }
 
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val language by viewModel.language.collectAsStateWithLifecycle()
     val snapInterval by viewModel.snapInterval.collectAsStateWithLifecycle()
     val alarmExpandStyle by viewModel.alarmExpandStyle.collectAsStateWithLifecycle()
     val timePickerStyle by viewModel.timePickerStyle.collectAsStateWithLifecycle()
@@ -124,6 +127,8 @@ fun SettingsScreen(
     }
     val notificationDeniedMessage = stringResource(R.string.alarm_permission_notification_denied)
     val testScheduledMessage = stringResource(R.string.alarm_test_scheduled)
+    val testExactMessage = stringResource(R.string.alarm_test_exact_required)
+    val testFailedMessage = stringResource(R.string.alarm_test_failed)
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -143,12 +148,22 @@ fun SettingsScreen(
         }
     }
     val testAlarm: () -> Unit = {
-        if (AlarmScheduler.scheduleTestAlarm(context)) {
-            Toast.makeText(context, testScheduledMessage, Toast.LENGTH_SHORT).show()
+        val message = when (AlarmScheduler.scheduleTestAlarm(context)) {
+            is ScheduleResult.Scheduled -> testScheduledMessage
+            ScheduleResult.ExactPermissionDenied -> testExactMessage
+            else -> testFailedMessage
         }
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
     val lightScheme = remember(context) { systemLightScheme(context) }
     val darkScheme = remember(context) { systemDarkScheme(context) }
+    val activity = LocalActivity.current
+    val selectLanguage: (AppLanguage) -> Unit = { selected ->
+        if (selected != language) {
+            viewModel.setLanguage(selected)
+            activity?.recreate()
+        }
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text(stringResource(R.string.settings_title)) }) },
@@ -169,28 +184,28 @@ fun SettingsScreen(
             SettingsSectionHeader(stringResource(R.string.settings_section_appearance))
             SettingsCard {
                 Column(modifier = Modifier.selectableGroup()) {
-                    ThemeOptionRow(
+                    SelectableOptionRow(
                         label = stringResource(R.string.theme_system),
                         selected = themeMode == ThemeMode.SYSTEM,
                         swatches = listOf(Color(0xFFFEF7FF), Color(0xFF141218)),
                         onSelect = { viewModel.setThemeMode(ThemeMode.SYSTEM) },
                     )
                     SettingsDivider()
-                    ThemeOptionRow(
+                    SelectableOptionRow(
                         label = stringResource(R.string.theme_light),
                         selected = themeMode == ThemeMode.LIGHT,
                         swatches = listOf(lightScheme.surface, lightScheme.primary),
                         onSelect = { viewModel.setThemeMode(ThemeMode.LIGHT) },
                     )
                     SettingsDivider()
-                    ThemeOptionRow(
+                    SelectableOptionRow(
                         label = stringResource(R.string.theme_dark),
                         selected = themeMode == ThemeMode.DARK,
                         swatches = listOf(darkScheme.surface, darkScheme.primary),
                         onSelect = { viewModel.setThemeMode(ThemeMode.DARK) },
                     )
                     SettingsDivider()
-                    ThemeOptionRow(
+                    SelectableOptionRow(
                         label = stringResource(R.string.theme_gruvbox),
                         selected = themeMode == ThemeMode.GRUVBOX,
                         swatches = listOf(
@@ -199,6 +214,29 @@ fun SettingsScreen(
                             Color(0xFF89B482),
                         ),
                         onSelect = { viewModel.setThemeMode(ThemeMode.GRUVBOX) },
+                    )
+                }
+            }
+
+            SettingsSectionHeader(stringResource(R.string.settings_section_language))
+            SettingsCard {
+                Column(modifier = Modifier.selectableGroup()) {
+                    SelectableOptionRow(
+                        label = stringResource(R.string.language_system),
+                        selected = language == AppLanguage.SYSTEM,
+                        onSelect = { selectLanguage(AppLanguage.SYSTEM) },
+                    )
+                    SettingsDivider()
+                    SelectableOptionRow(
+                        label = stringResource(R.string.language_traditional_chinese),
+                        selected = language == AppLanguage.TRADITIONAL_CHINESE,
+                        onSelect = { selectLanguage(AppLanguage.TRADITIONAL_CHINESE) },
+                    )
+                    SettingsDivider()
+                    SelectableOptionRow(
+                        label = stringResource(R.string.language_english),
+                        selected = language == AppLanguage.ENGLISH,
+                        onSelect = { selectLanguage(AppLanguage.ENGLISH) },
                     )
                 }
             }
@@ -255,6 +293,8 @@ fun SettingsScreen(
                 )
             }
 
+            SettingsBackupSection()
+
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
@@ -306,6 +346,7 @@ internal fun SettingsActionRow(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
 ) {
     Row(
         modifier = Modifier
@@ -316,12 +357,21 @@ internal fun SettingsActionRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_ai),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(24.dp),
-        )
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp),
+            )
+        } else {
+            Icon(
+                painter = painterResource(R.drawable.ic_ai),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp),
+            )
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
@@ -430,11 +480,11 @@ private fun <T> SegmentedPreference(
 }
 
 @Composable
-private fun ThemeOptionRow(
+private fun SelectableOptionRow(
     label: String,
     selected: Boolean,
-    swatches: List<Color>,
     onSelect: () -> Unit,
+    swatches: List<Color> = emptyList(),
 ) {
     Row(
         modifier = Modifier
@@ -455,15 +505,17 @@ private fun ThemeOptionRow(
             style = MaterialTheme.typography.bodyLarge,
             modifier = Modifier.weight(1f),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            swatches.forEach { color ->
-                Box(
-                    modifier = Modifier
-                        .size(14.dp)
-                        .clip(CircleShape)
-                        .background(color)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
-                )
+        if (swatches.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                swatches.forEach { color ->
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(color)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                    )
+                }
             }
         }
     }

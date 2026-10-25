@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -55,11 +56,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -80,6 +84,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -89,27 +95,20 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dinoe.clockwise.R
 import com.dinoe.clockwise.data.Event
+import com.dinoe.clockwise.data.MAX_OCCURRENCES_PER_SERIES
 import com.dinoe.clockwise.data.MAX_TAGS_PER_ITEM
 import com.dinoe.clockwise.data.RecurrenceRule
 import com.dinoe.clockwise.data.Tag
-import com.dinoe.clockwise.data.recurrenceDates
+import com.dinoe.clockwise.data.planRecurrence
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.YearMonth
-import java.time.format.DateTimeFormatter
-import java.util.Locale
+import java.time.format.FormatStyle
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
-private val monthTitleFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy年M月")
-private val dayTitleFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.TAIWAN)
-private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-private val dateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy年M月d日")
-
-// Week starts on Monday, matching the common Taiwanese calendar layout.
-private val weekdayLabels = listOf("一", "二", "三", "四", "五", "六", "日")
 
 @Composable
 fun CalendarScreen(
@@ -125,6 +124,14 @@ fun CalendarScreen(
     val timePickerStyle by viewModel.timePickerStyle.collectAsStateWithLifecycle()
     val selectedDate = viewModel.selectedDate
     val viewMode = viewModel.viewMode
+    val errorMessage = viewModel.errorMessage
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(errorMessage) {
+        val message = errorMessage ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(message)
+        viewModel.consumeError()
+    }
 
     var showTimePicker by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -145,6 +152,7 @@ fun CalendarScreen(
         topBar = {
             CalendarTopBar(viewMode = viewMode, onViewModeChange = { viewModel.viewMode = it })
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             FloatingActionButton(onClick = { showTimePicker = true }) {
                 Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_event))
@@ -352,91 +360,200 @@ private fun MonthView(
     val today = LocalDate.now()
     val eventsByDay = remember(events) { events.groupBy { it.date } }
     val firstOfMonth = displayedMonth.atDay(1)
+    val lastOfMonth = displayedMonth.atEndOfMonth()
     val gridStart = firstOfMonth.minusDays((firstOfMonth.dayOfWeek.value - 1).toLong())
+    // Monday-first grid ending on a Sunday. Most months need five rows, some six.
+    val weekRows = (((lastOfMonth.toEpochDay() - gridStart.toEpochDay()) / 7) + 1)
+        .toInt()
+        .coerceAtLeast(5)
 
-    Column(modifier = modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = { displayedMonth = displayedMonth.minusMonths(1) }) {
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                    contentDescription = stringResource(R.string.prev_month),
+    val showToday: () -> Unit = {
+        displayedMonth = YearMonth.from(today)
+        onDaySelected(today)
+    }
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        // Landscape phones have too little height for square cells plus the day list. Split the
+        // month and the selected day into panes instead of squeezing both into one column.
+        if (maxWidth > maxHeight) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.weight(1.25f).fillMaxHeight()) {
+                    MonthHeader(
+                        month = displayedMonth,
+                        onPrevious = { displayedMonth = displayedMonth.minusMonths(1) },
+                        onNext = { displayedMonth = displayedMonth.plusMonths(1) },
+                        onToday = showToday,
+                    )
+                    WeekdayHeader()
+                    MonthGrid(
+                        gridStart = gridStart,
+                        displayedMonth = displayedMonth,
+                        selectedDate = selectedDate,
+                        today = today,
+                        eventsByDay = eventsByDay,
+                        weekRows = weekRows,
+                        fillHeight = true,
+                        compact = true,
+                        onDaySelected = onDaySelected,
+                        onDayAddRequested = onDayAddRequested,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                VerticalDivider()
+                SelectedDayEvents(
+                    date = selectedDate,
+                    events = eventsByDay[selectedDate.toEpochDay()].orEmpty(),
+                    eventTags = eventTags,
+                    onEditRequested = onEditRequested,
+                    onDeleteRequested = onDeleteRequested,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
                 )
             }
-            Text(
-                text = displayedMonth.format(monthTitleFormatter),
-                style = MaterialTheme.typography.titleLarge,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(
-                onClick = {
-                    displayedMonth = YearMonth.from(today)
-                    onDaySelected(today)
-                },
-            ) {
-                Text(stringResource(R.string.today))
-            }
-            IconButton(onClick = { displayedMonth = displayedMonth.plusMonths(1) }) {
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = stringResource(R.string.next_month),
+        } else {
+            Column(modifier = Modifier.fillMaxSize()) {
+                MonthHeader(
+                    month = displayedMonth,
+                    onPrevious = { displayedMonth = displayedMonth.minusMonths(1) },
+                    onNext = { displayedMonth = displayedMonth.plusMonths(1) },
+                    onToday = showToday,
                 )
-            }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-        ) {
-            weekdayLabels.forEach { label ->
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
+                WeekdayHeader()
+                MonthGrid(
+                    gridStart = gridStart,
+                    displayedMonth = displayedMonth,
+                    selectedDate = selectedDate,
+                    today = today,
+                    eventsByDay = eventsByDay,
+                    weekRows = weekRows,
+                    fillHeight = false,
+                    compact = false,
+                    onDaySelected = onDaySelected,
+                    onDayAddRequested = onDayAddRequested,
+                )
+                SelectedDayEvents(
+                    date = selectedDate,
+                    events = eventsByDay[selectedDate.toEpochDay()].orEmpty(),
+                    eventTags = eventTags,
+                    onEditRequested = onEditRequested,
+                    onDeleteRequested = onDeleteRequested,
                     modifier = Modifier.weight(1f),
                 )
             }
         }
+    }
+}
 
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(4.dp),
-        ) {
-            for (row in 0 until 6) {
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    for (column in 0 until 7) {
-                        val date = gridStart.plusDays((row * 7 + column).toLong())
-                        DayCell(
-                            date = date,
-                            inDisplayedMonth = YearMonth.from(date) == displayedMonth,
-                            isSelected = date == selectedDate,
-                            isToday = date == today,
-                            hasEvent = eventsByDay.containsKey(date.toEpochDay()),
-                            onClick = { onDaySelected(date) },
-                            onDoubleClick = { onDayAddRequested(date) },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
+@Composable
+private fun MonthHeader(
+    month: YearMonth,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onToday: () -> Unit,
+) {
+    val monthFormatter = rememberDatePatternFormatter("yMMMM")
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onPrevious) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                contentDescription = stringResource(R.string.prev_month),
+            )
+        }
+        Text(
+            text = month.format(monthFormatter),
+            style = MaterialTheme.typography.titleLarge,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onToday) {
+            Text(stringResource(R.string.today))
+        }
+        IconButton(onClick = onNext) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = stringResource(R.string.next_month),
+            )
+        }
+    }
+}
+
+@Composable
+private fun WeekdayHeader() {
+    val weekdayLabels = rememberWeekdayLabels()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+    ) {
+        weekdayLabels.forEach { label ->
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.MonthGrid(
+    gridStart: LocalDate,
+    displayedMonth: YearMonth,
+    selectedDate: LocalDate,
+    today: LocalDate,
+    eventsByDay: Map<Long, List<Event>>,
+    weekRows: Int,
+    fillHeight: Boolean,
+    compact: Boolean,
+    onDaySelected: (LocalDate) -> Unit,
+    onDayAddRequested: (LocalDate) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+    ) {
+        for (row in 0 until weekRows) {
+            Row(
+                modifier = if (fillHeight) {
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                } else {
+                    Modifier.fillMaxWidth()
+                },
+            ) {
+                for (column in 0 until 7) {
+                    val date = gridStart.plusDays((row * 7 + column).toLong())
+                    DayCell(
+                        date = date,
+                        inDisplayedMonth = YearMonth.from(date) == displayedMonth,
+                        isSelected = date == selectedDate,
+                        isToday = date == today,
+                        hasEvent = eventsByDay.containsKey(date.toEpochDay()),
+                        onClick = { onDaySelected(date) },
+                        onDoubleClick = { onDayAddRequested(date) },
+                        square = !fillHeight,
+                        compact = compact,
+                        modifier = Modifier
+                            .weight(1f)
+                            .then(if (fillHeight) Modifier.fillMaxHeight() else Modifier),
+                    )
                 }
             }
         }
-
-        SelectedDayEvents(
-            date = selectedDate,
-            events = eventsByDay[selectedDate.toEpochDay()].orEmpty(),
-            eventTags = eventTags,
-            onEditRequested = onEditRequested,
-            onDeleteRequested = onDeleteRequested,
-            modifier = Modifier.weight(1f),
-        )
     }
 }
 
@@ -449,10 +566,11 @@ private fun SelectedDayEvents(
     onDeleteRequested: (Event) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
     Column(modifier = modifier.fillMaxWidth()) {
         HorizontalDivider()
         Text(
-            text = date.format(dayTitleFormatter),
+            text = date.format(dayFormatter),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
@@ -494,6 +612,8 @@ private fun DayCell(
     onClick: () -> Unit,
     onDoubleClick: () -> Unit,
     modifier: Modifier = Modifier,
+    square: Boolean = true,
+    compact: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
     val numberColor = when {
@@ -502,10 +622,37 @@ private fun DayCell(
         isToday -> colors.primary
         else -> colors.onSurface
     }
+    val fullDateFormatter = rememberLocalizedDateFormatter(FormatStyle.FULL)
+    val selectedLabel = stringResource(R.string.day_cell_selected)
+    val todayLabel = stringResource(R.string.today)
+    val outsideMonthLabel = stringResource(R.string.day_cell_outside_month)
+    val eventsLabel = stringResource(
+        if (hasEvent) R.string.day_cell_has_events else R.string.empty_day,
+    )
+    val description = remember(
+        date,
+        isSelected,
+        isToday,
+        inDisplayedMonth,
+        hasEvent,
+        fullDateFormatter,
+        selectedLabel,
+        todayLabel,
+        outsideMonthLabel,
+        eventsLabel,
+    ) {
+        buildString {
+            append(fullDateFormatter.format(date))
+            if (isToday) append(", ").append(todayLabel)
+            if (isSelected) append(", ").append(selectedLabel)
+            if (!inDisplayedMonth) append(", ").append(outsideMonthLabel)
+            append(", ").append(eventsLabel)
+        }
+    }
     Box(
         modifier = modifier
-            .aspectRatio(1f)
-            .padding(2.dp)
+            .then(if (square) Modifier.aspectRatio(1f) else Modifier)
+            .padding(if (compact) 1.dp else 2.dp)
             .then(
                 when {
                     isSelected -> Modifier.background(colors.primary, CircleShape)
@@ -513,6 +660,7 @@ private fun DayCell(
                     else -> Modifier
                 },
             )
+            .semantics(mergeDescendants = true) { contentDescription = description }
             .combinedClickable(onClick = onClick, onDoubleClick = onDoubleClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -520,13 +668,18 @@ private fun DayCell(
             Text(
                 text = date.dayOfMonth.toString(),
                 color = numberColor,
-                style = MaterialTheme.typography.bodyLarge,
+                style = if (compact) {
+                    MaterialTheme.typography.bodySmall
+                } else {
+                    MaterialTheme.typography.bodyLarge
+                },
+                maxLines = 1,
             )
             if (hasEvent) {
-                Spacer(Modifier.height(2.dp))
+                if (!compact) Spacer(Modifier.height(2.dp))
                 Box(
                     modifier = Modifier
-                        .size(5.dp)
+                        .size(if (compact) 3.dp else 5.dp)
                         .background(if (isSelected) colors.onPrimary else colors.primary, CircleShape),
                 )
             }
@@ -639,6 +792,7 @@ private fun DayTimelineView(
 ) {
     val density = LocalDensity.current
     val scrollState = rememberScrollState()
+    val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
 
     LaunchedEffect(date) {
         val targetSeconds = events.minOfOrNull { it.start }
@@ -650,7 +804,7 @@ private fun DayTimelineView(
 
     Column(modifier = modifier.fillMaxSize()) {
         Text(
-            text = date.format(dayTitleFormatter),
+            text = date.format(dayFormatter),
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
@@ -679,6 +833,7 @@ private fun TimeRangePickerDialog(
 ) {
     val density = LocalDensity.current
     val scrollState = rememberScrollState()
+    val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
     var draftTimes by remember { mutableStateOf(defaultDraftTimes(snapMinutes)) }
 
     LaunchedEffect(Unit) {
@@ -691,7 +846,7 @@ private fun TimeRangePickerDialog(
         Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    text = date.format(dayTitleFormatter),
+                    text = date.format(dayFormatter),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -751,6 +906,7 @@ private fun TimelineContent(
     modifier: Modifier = Modifier,
 ) {
     val slots = remember(events) { layoutTimelineEvents(events) }
+    val clockFormatter = rememberClockFormatter()
     BoxWithConstraints(modifier = modifier) {
         val panelWidth = maxWidth - TimelineLabelWidth
         val viewportHeightPx = with(LocalDensity.current) { maxHeight.toPx() }
@@ -766,7 +922,7 @@ private fun TimelineContent(
                         contentAlignment = Alignment.TopEnd,
                     ) {
                         Text(
-                            text = timeFormatter.format(
+                            text = clockFormatter.format(
                                 LocalTime.ofSecondOfDay(hour * 3_600L),
                             ),
                             style = MaterialTheme.typography.labelSmall,
@@ -865,6 +1021,7 @@ private fun TimelineEventBlock(
     val tagColors = tags.mapNotNull { tag -> if (tag.color == 0) null else Color(tag.color) }
     val durationSeconds = (event.end - event.start).coerceAtLeast(0)
     val shape = RoundedCornerShape(8.dp)
+    val clockFormatter = rememberClockFormatter()
 
     Box(
         modifier = modifier
@@ -906,8 +1063,8 @@ private fun TimelineEventBlock(
             }
             if (durationSeconds >= 1_800) {
                 Text(
-                    text = "${timeFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))} – " +
-                        timeFormatter.format(LocalTime.ofSecondOfDay(event.end.toLong())),
+                    text = "${clockFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))} – " +
+                        clockFormatter.format(LocalTime.ofSecondOfDay(event.end.toLong())),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
@@ -935,6 +1092,7 @@ private fun DraftEventBlock(
     val shape = RoundedCornerShape(8.dp)
     val handleFill = MaterialTheme.colorScheme.surface
     val handleBorder = MaterialTheme.colorScheme.primary
+    val clockFormatter = rememberClockFormatter()
 
     Box(
         modifier = modifier
@@ -1022,8 +1180,8 @@ private fun DraftEventBlock(
             },
     ) {
         Text(
-            text = "${timeFormatter.format(LocalTime.ofSecondOfDay(startSeconds.toLong()))} – " +
-                timeFormatter.format(LocalTime.ofSecondOfDay(endSeconds.toLong())),
+            text = "${clockFormatter.format(LocalTime.ofSecondOfDay(startSeconds.toLong()))} – " +
+                clockFormatter.format(LocalTime.ofSecondOfDay(endSeconds.toLong())),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onPrimary,
@@ -1093,6 +1251,7 @@ private fun EventRow(
     val tagColors = tags.mapNotNull { tag ->
         if (tag.color == 0) null else Color(tag.color)
     }
+    val clockFormatter = rememberClockFormatter()
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -1120,8 +1279,8 @@ private fun EventRow(
                     .padding(16.dp),
             ) {
                 Text(
-                    text = "${timeFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))} – " +
-                        timeFormatter.format(LocalTime.ofSecondOfDay(event.end.toLong())),
+                    text = "${clockFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))} – " +
+                        clockFormatter.format(LocalTime.ofSecondOfDay(event.end.toLong())),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -1213,15 +1372,21 @@ private fun AddEventDialog(
         days = repeatDayIds.map { it.toInt() }.toSet(),
         untilEpochDay = repeatUntilEpochDay,
     )
+    val repeatPlan = if (repeatType == Event.REPEAT_NONE) {
+        null
+    } else {
+        planRecurrence(date, repeatRule)
+    }
     val isRepeatUntilValid = repeatType == Event.REPEAT_NONE ||
         repeatUntilEpochDay > date.toEpochDay()
     val isRepeatDaysValid = repeatType != Event.REPEAT_WEEKLY || repeatDayIds.isNotEmpty()
-    val isValid = title.isNotBlank() && isRepeatUntilValid && isRepeatDaysValid
-    val occurrenceCount = if (repeatType == Event.REPEAT_NONE) {
-        1
-    } else {
-        1 + recurrenceDates(date, repeatRule).size
-    }
+    val isRepeatSizeValid = repeatPlan?.limitReached != true
+    val isValid = title.isNotBlank() && isRepeatUntilValid &&
+        isRepeatDaysValid && isRepeatSizeValid
+    val occurrenceCount = repeatPlan?.totalOccurrences ?: 1
+    val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
+    val untilDateFormatter = rememberLocalizedDateFormatter()
+    val weekdayLabels = rememberWeekdayLabels()
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
@@ -1232,7 +1397,7 @@ private fun AddEventDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = date.format(dayTitleFormatter),
+                    text = date.format(dayFormatter),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -1316,19 +1481,28 @@ private fun AddEventDialog(
                                 )
                                 Text(
                                     text = LocalDate.ofEpochDay(repeatUntilEpochDay)
-                                        .format(dateFormatter),
+                                        .format(untilDateFormatter),
                                     style = MaterialTheme.typography.titleMedium,
                                 )
                             }
                         }
-                        if (!isRepeatUntilValid) {
-                            Text(
+                        when {
+                            !isRepeatUntilValid -> Text(
                                 text = stringResource(R.string.repeat_until_invalid),
                                 color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                        } else {
-                            Text(
+
+                            !isRepeatSizeValid -> Text(
+                                text = stringResource(
+                                    R.string.recurrence_too_large,
+                                    MAX_OCCURRENCES_PER_SERIES,
+                                ),
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+
+                            else -> Text(
                                 text = stringResource(R.string.series_size_info, occurrenceCount),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1455,6 +1629,7 @@ private fun EditEventDialog(
         }
     }
     val isValid = title.isNotBlank() && endSeconds > startSeconds
+    val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
@@ -1483,7 +1658,7 @@ private fun EditEventDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            text = LocalDate.ofEpochDay(dateEpochDay).format(dayTitleFormatter),
+                            text = LocalDate.ofEpochDay(dateEpochDay).format(dayFormatter),
                             style = MaterialTheme.typography.titleMedium,
                         )
                     }
@@ -1646,6 +1821,7 @@ private fun TimeSlotButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val clockFormatter = rememberClockFormatter()
     OutlinedButton(onClick = onClick, modifier = modifier) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -1657,7 +1833,7 @@ private fun TimeSlotButton(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = timeFormatter.format(LocalTime.ofSecondOfDay(secondsOfDay.toLong())),
+                text = clockFormatter.format(LocalTime.ofSecondOfDay(secondsOfDay.toLong())),
                 style = MaterialTheme.typography.titleMedium,
             )
         }

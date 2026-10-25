@@ -7,8 +7,12 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dinoe.clockwise.ClockwiseApp
+import com.dinoe.clockwise.R
 import com.dinoe.clockwise.data.Alarm
+import com.dinoe.clockwise.data.ScheduleLimit
+import com.dinoe.clockwise.data.ScheduleLimitException
 import com.dinoe.clockwise.data.Tag
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -21,6 +25,7 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
     private val tagDao = (application as ClockwiseApp).database.tagDao()
     private val writer = (application as ClockwiseApp).scheduleWriter
     private val preferences = ThemePreferences(application)
+    private val appContext = application.applicationContext
 
     val alarmExpandStyle: StateFlow<AlarmStackExpandStyle> = preferences.alarmExpandStyle
         .stateIn(
@@ -44,9 +49,49 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
     var expandedGroupKeys: Set<String> by mutableStateOf(emptySet())
         private set
 
+    /** One-shot message for a failed write; the screen shows it and calls [consumeError]. */
+    var errorMessage: String? by mutableStateOf(null)
+        private set
+
+    fun consumeError() {
+        errorMessage = null
+    }
+
     fun toggleGroup(key: String) {
         expandedGroupKeys =
             if (key in expandedGroupKeys) expandedGroupKeys - key else expandedGroupKeys + key
+    }
+
+    private fun launchWrite(block: suspend () -> Unit) {
+        viewModelScope.launch {
+            try {
+                block()
+            } catch (error: ScheduleLimitException) {
+                reportError(error)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                reportError(error)
+            }
+        }
+    }
+
+    private fun reportError(error: Throwable) {
+        errorMessage = when (error) {
+            is ScheduleLimitException -> when (error.kind) {
+                ScheduleLimit.OCCURRENCES -> appContext.getString(
+                    R.string.write_error_occurrence_limit,
+                    error.maximum,
+                )
+
+                ScheduleLimit.ACTIVE_ALARMS -> appContext.getString(
+                    R.string.write_error_alarm_limit,
+                    error.maximum,
+                )
+            }
+
+            else -> appContext.getString(R.string.write_error_generic)
+        }
     }
 
     val allTags: StateFlow<List<Tag>> = tagDao.observeAll()
@@ -61,9 +106,21 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
                 }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    fun addAlarm(time: Int, name: String, note: String, tags: List<Tag>) {
-        viewModelScope.launch {
-            writer.addAlarm(time = time, name = name, note = note, tags = tags)
+    fun addAlarm(
+        time: Int,
+        name: String,
+        note: String,
+        oneTime: Boolean,
+        tags: List<Tag>,
+    ) {
+        launchWrite {
+            writer.addAlarm(
+                time = time,
+                name = name,
+                note = note,
+                oneTime = oneTime,
+                tags = tags,
+            )
         }
     }
 
@@ -72,9 +129,10 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
         time: Int,
         name: String,
         note: String,
+        oneTime: Boolean,
         tags: List<Tag>,
     ) {
-        viewModelScope.launch {
+        launchWrite {
             writer.updateAlarm(
                 alarm = alarm,
                 time = time,
@@ -82,19 +140,20 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
                 name = name,
                 note = note,
                 enabled = alarm.enabled,
+                oneTime = oneTime,
                 tags = tags,
             )
         }
     }
 
     fun setEnabled(alarm: Alarm, enabled: Boolean) {
-        viewModelScope.launch {
+        launchWrite {
             writer.setAlarmEnabled(alarm, enabled)
         }
     }
 
     fun deleteAlarm(alarm: Alarm) {
-        viewModelScope.launch {
+        launchWrite {
             writer.deleteAlarm(alarm)
         }
     }

@@ -1,11 +1,14 @@
 package com.dinoe.clockwise.alarm
 
 import android.app.KeyguardManager
+import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -33,12 +36,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dinoe.clockwise.R
+import com.dinoe.clockwise.ui.ApplySystemBarStyle
 import com.dinoe.clockwise.ui.ClockwiseTheme
+import com.dinoe.clockwise.ui.ThemeMode
 import com.dinoe.clockwise.ui.ThemePreferences
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
+import com.dinoe.clockwise.ui.rememberClockFormatter
+import com.dinoe.clockwise.ui.withAppLocale
 import java.time.LocalTime
-import java.time.format.DateTimeFormatter
 
 class AlarmActivity : ComponentActivity() {
     private var alarmId = -1L
@@ -46,9 +50,16 @@ class AlarmActivity : ComponentActivity() {
     private var alarmNote = ""
     private var alarmTime = 0
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(newBase.withAppLocale())
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
+        )
         configureWindow()
         readAlarm(intent)
         if (alarmId <= 0L) {
@@ -56,9 +67,14 @@ class AlarmActivity : ComponentActivity() {
             return
         }
 
-        val themeMode = runBlocking { ThemePreferences(applicationContext).mode.first() }
+        val themePreferences = ThemePreferences(applicationContext)
         setContent {
+            // Start with the platform theme and apply the saved choice as soon as it loads.
+            val themeMode by themePreferences.mode.collectAsStateWithLifecycle(
+                initialValue = ThemeMode.SYSTEM,
+            )
             ClockwiseTheme(themeMode) {
+                ApplySystemBarStyle(this@AlarmActivity, themeMode)
                 AlarmRingingScreen(
                     name = alarmName,
                     note = alarmNote,
@@ -104,14 +120,18 @@ class AlarmActivity : ComponentActivity() {
 
     private fun stopAlarm() {
         startService(
-            Intent(this, AlarmService::class.java).setAction(AlarmService.ACTION_STOP),
+            Intent(this, AlarmService::class.java)
+                .setAction(AlarmService.ACTION_STOP)
+                .putExtra(AlarmService.EXTRA_ALARM_ID, alarmId),
         )
         finish()
     }
 
     private fun snoozeAlarm() {
         startService(
-            Intent(this, AlarmService::class.java).setAction(AlarmService.ACTION_SNOOZE),
+            Intent(this, AlarmService::class.java)
+                .setAction(AlarmService.ACTION_SNOOZE)
+                .putExtra(AlarmService.EXTRA_ALARM_ID, alarmId),
         )
         finish()
     }
@@ -127,6 +147,7 @@ private fun AlarmRingingScreen(
     onFinish: () -> Unit,
 ) {
     val activeAlarmId by AlarmService.activeAlarmId.collectAsStateWithLifecycle()
+    val clockFormatter = rememberClockFormatter()
     LaunchedEffect(activeAlarmId) {
         if (activeAlarmId == null) onFinish()
     }
@@ -147,7 +168,7 @@ private fun AlarmRingingScreen(
         ) {
             Text(
                 text = if (time in 0..86_399) {
-                    timeFormatter.format(LocalTime.ofSecondOfDay(time.toLong()))
+                    clockFormatter.format(LocalTime.ofSecondOfDay(time.toLong()))
                 } else {
                     stringResource(R.string.alarm_unknown_time)
                 },
@@ -193,5 +214,3 @@ private fun AlarmRingingScreen(
         }
     }
 }
-
-private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")

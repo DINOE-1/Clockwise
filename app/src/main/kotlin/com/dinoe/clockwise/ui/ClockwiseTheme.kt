@@ -1,7 +1,12 @@
 package com.dinoe.clockwise.ui
 
 import android.content.Context
+import android.graphics.Color as AndroidColor
 import android.os.Build
+import android.text.format.DateFormat
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -10,8 +15,16 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import java.time.DayOfWeek
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.time.format.TextStyle
+import java.util.Locale
 
 @Composable
 fun ClockwiseTheme(
@@ -42,6 +55,90 @@ internal fun systemLightScheme(context: Context): ColorScheme =
     } else {
         lightColorScheme()
     }
+
+/**
+ * Keeps the status/navigation bar icons in sync with the app theme. Activities should call
+ * [enableEdgeToEdge] with [SystemBarStyle.auto] in `onCreate`, then use this effect to react to
+ * a user-forced light/dark/Gruvbox theme that differs from the system setting.
+ */
+@Composable
+fun ApplySystemBarStyle(activity: ComponentActivity, themeMode: ThemeMode) {
+    val systemDark = isSystemInDarkTheme()
+    val darkTheme = when (themeMode) {
+        ThemeMode.SYSTEM -> systemDark
+        ThemeMode.DARK, ThemeMode.GRUVBOX -> true
+        ThemeMode.LIGHT -> false
+    }
+    LaunchedEffect(activity, darkTheme) {
+        val statusBarStyle = SystemBarStyle.auto(
+            lightScrim = AndroidColor.TRANSPARENT,
+            darkScrim = AndroidColor.TRANSPARENT,
+            detectDarkMode = { darkTheme },
+        )
+        val navigationBarStyle = SystemBarStyle.auto(
+            lightScrim = AndroidColor.TRANSPARENT,
+            darkScrim = AndroidColor.TRANSPARENT,
+            detectDarkMode = { darkTheme },
+        )
+        activity.enableEdgeToEdge(
+            statusBarStyle = statusBarStyle,
+            navigationBarStyle = navigationBarStyle,
+        )
+    }
+}
+
+/**
+ * Locale used for all date and time labels. Reading it through Compose keeps formatters in sync
+ * with configuration changes (the activity is recreated on a locale change).
+ */
+@Composable
+fun rememberLocale(): Locale {
+    val configuration = LocalConfiguration.current
+    return remember(configuration) { configuration.locales[0] }
+}
+
+/** Clock formatter that follows the device 12/24-hour setting and the current locale. */
+@Composable
+fun rememberClockFormatter(): DateTimeFormatter {
+    val context = LocalContext.current
+    val locale = rememberLocale()
+    val is24Hour = DateFormat.is24HourFormat(context)
+    return remember(locale, is24Hour) {
+        val skeleton = if (is24Hour) "Hm" else "hm"
+        DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, skeleton), locale)
+    }
+}
+
+/** Fully localized date format for the requested [FormatStyle]. */
+@Composable
+fun rememberLocalizedDateFormatter(
+    style: FormatStyle = FormatStyle.MEDIUM,
+): DateTimeFormatter {
+    val locale = rememberLocale()
+    return remember(locale, style) {
+        DateTimeFormatter.ofLocalizedDate(style).withLocale(locale)
+    }
+}
+
+/** Localized formatter for an ICU date skeleton such as `yMMMM` or `MMMdEEEE`. */
+@Composable
+fun rememberDatePatternFormatter(skeleton: String): DateTimeFormatter {
+    val locale = rememberLocale()
+    return remember(locale, skeleton) {
+        DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, skeleton), locale)
+    }
+}
+
+/** Monday-first weekday labels (short form) supplied by the current locale. */
+@Composable
+fun rememberWeekdayLabels(): List<String> {
+    val locale = rememberLocale()
+    return remember(locale) {
+        (1..7).map { day ->
+            DayOfWeek.of(day).getDisplayName(TextStyle.SHORT, locale)
+        }
+    }
+}
 
 private val GruvboxBackground = Color(0xFF1D2021)
 private val GruvboxForeground = Color(0xFFD4BE98)

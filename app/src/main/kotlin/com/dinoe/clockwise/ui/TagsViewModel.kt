@@ -3,6 +3,7 @@ package com.dinoe.clockwise.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
 import com.dinoe.clockwise.ClockwiseApp
 import com.dinoe.clockwise.data.Tag
 import kotlinx.coroutines.flow.SharingStarted
@@ -11,7 +12,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class TagsViewModel(application: Application) : AndroidViewModel(application) {
-    private val tagDao = (application as ClockwiseApp).database.tagDao()
+    private val database = (application as ClockwiseApp).database
+    private val tagDao = database.tagDao()
 
     val tags: StateFlow<List<Tag>> = tagDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -23,10 +25,16 @@ class TagsViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            val success = tagDao.getByName(trimmed) == null
-            if (success) {
-                tagDao.insert(Tag(name = trimmed, color = color))
-            }
+            val success = runCatching {
+                database.withTransaction {
+                    if (tagDao.getByName(trimmed) == null) {
+                        tagDao.insert(Tag(name = trimmed, color = color))
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }.getOrDefault(false)
             onResult(success)
         }
     }
@@ -38,20 +46,30 @@ class TagsViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            val existing = tagDao.getByName(trimmed)
-            val success = existing == null || existing.id == tag.id
-            if (success) {
-                tagDao.update(tag.copy(name = trimmed, color = color))
-            }
+            val success = runCatching {
+                database.withTransaction {
+                    val existing = tagDao.getByName(trimmed)
+                    if (existing == null || existing.id == tag.id) {
+                        tagDao.update(tag.copy(name = trimmed, color = color))
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }.getOrDefault(false)
             onResult(success)
         }
     }
 
     fun deleteTag(tag: Tag) {
         viewModelScope.launch {
-            tagDao.deleteEventTagRefs(tag.id)
-            tagDao.deleteAlarmTagRefs(tag.id)
-            tagDao.delete(tag)
+            runCatching {
+                database.withTransaction {
+                    tagDao.deleteEventTagRefs(tag.id)
+                    tagDao.deleteAlarmTagRefs(tag.id)
+                    tagDao.delete(tag)
+                }
+            }
         }
     }
 }

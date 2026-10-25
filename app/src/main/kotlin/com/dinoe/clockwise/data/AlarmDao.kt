@@ -33,9 +33,40 @@ interface AlarmDao {
     @Query("SELECT * FROM alarms WHERE enabled = 1")
     suspend fun getEnabled(): List<Alarm>
 
+    @Query("SELECT COUNT(*) FROM alarms WHERE enabled = 1")
+    suspend fun countEnabled(): Int
+
+    @Query("UPDATE alarms SET snoozedUntil = :until WHERE id = :id")
+    suspend fun setSnoozedUntil(id: Long, until: Long)
+
+    @Query("UPDATE alarms SET snoozedUntil = NULL WHERE id = :id")
+    suspend fun clearSnooze(id: Long)
+
+    // Conditional so a snooze requested at the same moment as the one-shot disable wins.
+    @Query(
+        "UPDATE alarms SET enabled = 0, snoozedUntil = NULL " +
+            "WHERE id = :id AND snoozedUntil IS NULL",
+    )
+    suspend fun disableIfNotSnoozed(id: Long): Int
+
     @Query("SELECT * FROM alarms WHERE eventId = :eventId LIMIT 1")
     suspend fun getByEventId(eventId: Long): Alarm?
 
     @Query("SELECT DISTINCT eventId FROM alarms WHERE eventId IS NOT NULL")
     suspend fun getLinkedEventIds(): List<Long>
+
+    @Query(
+        "SELECT * FROM alarms WHERE eventId IS NOT NULL " +
+            "AND eventId NOT IN (SELECT id FROM events)",
+    )
+    suspend fun getOrphanedEventAlarms(): List<Alarm>
+
+    @Query(
+        "DELETE FROM alarms WHERE eventId IS NOT NULL " +
+            "AND eventId NOT IN (SELECT id FROM events)",
+    )
+    suspend fun deleteOrphanedEventAlarms(): Int
+
+    @Query("DELETE FROM alarms")
+    suspend fun deleteAllAlarms()
 }

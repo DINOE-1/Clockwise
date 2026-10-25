@@ -3,8 +3,9 @@ package com.dinoe.clockwise.ai
 import com.dinoe.clockwise.data.Alarm
 import com.dinoe.clockwise.data.Event
 import com.dinoe.clockwise.data.EventScope
+import com.dinoe.clockwise.data.MAX_OCCURRENCES_PER_SERIES
 import com.dinoe.clockwise.data.RecurrenceRule
-import com.dinoe.clockwise.data.recurrenceDates
+import com.dinoe.clockwise.data.planRecurrence
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -547,12 +548,13 @@ class AiToolParser(
                         days = repeatDays,
                         untilEpochDay = until.toEpochDay(),
                     )
-                    occurrences = 1 + recurrenceDates(date, rule).size
-                    if (occurrences > AiTokenBudget.MAX_RECURRING_OCCURRENCES) {
+                    val plan = planRecurrence(date, rule)
+                    occurrences = plan.totalOccurrences
+                    if (plan.limitReached || occurrences > MAX_OCCURRENCES_PER_SERIES) {
                         throw error(
                             "too_many_occurrences",
-                            "events[$index] would create $occurrences occurrences; " +
-                                "keep it under ${AiTokenBudget.MAX_RECURRING_OCCURRENCES}",
+                            "events[$index] would create more than " +
+                                "$MAX_OCCURRENCES_PER_SERIES occurrences",
                         )
                     }
                 }

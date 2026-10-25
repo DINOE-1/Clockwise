@@ -1,7 +1,7 @@
 package com.dinoe.clockwise.ui
 
 import android.Manifest
-import android.content.Context
+import android.content.res.Resources
 import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
@@ -67,9 +67,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.Lifecycle
@@ -80,6 +82,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dinoe.clockwise.R
 import com.dinoe.clockwise.alarm.AlarmPermissions
 import com.dinoe.clockwise.alarm.AlarmScheduler
+import com.dinoe.clockwise.alarm.ScheduleResult
 import com.dinoe.clockwise.data.Alarm
 import com.dinoe.clockwise.data.MAX_TAGS_PER_ITEM
 import com.dinoe.clockwise.data.Tag
@@ -90,13 +93,6 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import java.util.Locale
-
-private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-private val fireDateFormatter: DateTimeFormatter =
-    DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.TAIWAN)
-private val fireDateWithYearFormatter: DateTimeFormatter =
-    DateTimeFormatter.ofPattern("yyyy年M月d日 EEEE", Locale.TAIWAN)
 
 private val StackPeekStep = 10.dp
 private const val StackPeekLayers = 3
@@ -120,40 +116,43 @@ private sealed interface AlarmListItem {
     }
 }
 
-private fun formatFireDate(epochDay: Long): String {
+private fun formatFireDate(
+    epochDay: Long,
+    withoutYear: DateTimeFormatter,
+    withYear: DateTimeFormatter,
+): String {
     val date = LocalDate.ofEpochDay(epochDay)
-    val formatter =
-        if (date.year == LocalDate.now().year) fireDateFormatter else fireDateWithYearFormatter
+    val formatter = if (date.year == LocalDate.now().year) withoutYear else withYear
     return formatter.format(date)
 }
 
-// Renders the countdown with only the units that matter, e.g. "2天3小時", "45分".
-private fun formatRingCountdown(context: Context, countdown: RingCountdown): String = when {
+// Renders the countdown with only the units that matter, e.g. "2d 3h" or "45 min".
+private fun formatRingCountdown(resources: Resources, countdown: RingCountdown): String = when {
     countdown.days > 0 -> when {
-        countdown.hours > 0 && countdown.minutes > 0 -> context.getString(
+        countdown.hours > 0 && countdown.minutes > 0 -> resources.getString(
             R.string.duration_days_hours_minutes,
             countdown.days,
             countdown.hours,
             countdown.minutes,
         )
-        countdown.hours > 0 -> context.getString(
+        countdown.hours > 0 -> resources.getString(
             R.string.duration_days_hours,
             countdown.days,
             countdown.hours,
         )
-        countdown.minutes > 0 -> context.getString(
+        countdown.minutes > 0 -> resources.getString(
             R.string.duration_days_minutes,
             countdown.days,
             countdown.minutes,
         )
-        else -> context.getString(R.string.duration_days, countdown.days)
+        else -> resources.getString(R.string.duration_days, countdown.days)
     }
     countdown.hours > 0 -> if (countdown.minutes > 0) {
-        context.getString(R.string.duration_hours_minutes, countdown.hours, countdown.minutes)
+        resources.getString(R.string.duration_hours_minutes, countdown.hours, countdown.minutes)
     } else {
-        context.getString(R.string.duration_hours, countdown.hours)
+        resources.getString(R.string.duration_hours, countdown.hours)
     }
-    else -> context.getString(R.string.duration_minutes, countdown.minutes)
+    else -> resources.getString(R.string.duration_minutes, countdown.minutes)
 }
 
 @Composable
@@ -169,6 +168,11 @@ fun AlarmScreen(
     val expandedGroupKeys = viewModel.expandedGroupKeys
     val drawerExpansion = expandStyle == AlarmStackExpandStyle.DRAWER
     val context = LocalContext.current
+    val resources = LocalResources.current
+    val errorMessage = viewModel.errorMessage
+    val clockFormatter = rememberClockFormatter()
+    val fireDateFormatter = rememberDatePatternFormatter("MMMdEEEE")
+    val fireDateWithYearFormatter = rememberDatePatternFormatter("yMMMdEEEE")
 
     val listItems = remember(groups, expandedGroupKeys, drawerExpansion) {
         buildList {
@@ -195,12 +199,12 @@ fun AlarmScreen(
     val scope = rememberCoroutineScope()
     val showSavedNotice: (Boolean, RingCountdown?) -> Unit = { enabled, countdown ->
         val message = if (enabled && countdown != null) {
-            context.getString(
+            resources.getString(
                 R.string.alarm_saved_ring_in,
-                formatRingCountdown(context, countdown),
+                formatRingCountdown(resources, countdown),
             )
         } else {
-            context.getString(R.string.alarm_saved_disabled)
+            resources.getString(R.string.alarm_saved_disabled)
         }
         scope.launch {
             snackbarHostState.currentSnackbarData?.dismiss()
@@ -214,6 +218,13 @@ fun AlarmScreen(
                 snackbarHostState.currentSnackbarData?.dismiss()
             }
         }
+    }
+
+    LaunchedEffect(errorMessage) {
+        val message = errorMessage ?: return@LaunchedEffect
+        snackbarHostState.currentSnackbarData?.dismiss()
+        snackbarHostState.showSnackbar(message)
+        viewModel.consumeError()
     }
 
     // Drives the top countdown banner and refreshes it as time passes.
@@ -246,6 +257,8 @@ fun AlarmScreen(
 
     val notificationDeniedMessage = stringResource(R.string.alarm_permission_notification_denied)
     val testScheduledMessage = stringResource(R.string.alarm_test_scheduled)
+    val testExactMessage = stringResource(R.string.alarm_test_exact_required)
+    val testFailedMessage = stringResource(R.string.alarm_test_failed)
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -283,7 +296,7 @@ fun AlarmScreen(
                 AlarmRingBanner(
                     text = stringResource(
                         R.string.alarm_ring_in,
-                        formatRingCountdown(context, ringCountdown(next, now)),
+                        formatRingCountdown(resources, ringCountdown(next, now)),
                     ),
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
                 )
@@ -397,8 +410,8 @@ fun AlarmScreen(
             allTags = allTags,
             timePickerStyle = timePickerStyle,
             onDismiss = { showAddDialog = false },
-            onSave = { seconds, name, note, tags ->
-                viewModel.addAlarm(seconds, name, note, tags)
+            onSave = { seconds, name, note, oneTime, tags ->
+                viewModel.addAlarm(seconds, name, note, oneTime, tags)
                 showAddDialog = false
                 showSavedNotice(true, ringCountdown(Alarm(time = seconds)))
                 if (!permissionStatus.notificationsGranted) {
@@ -415,8 +428,8 @@ fun AlarmScreen(
             initialTags = alarmTagMap[alarm.id].orEmpty(),
             timePickerStyle = timePickerStyle,
             onDismiss = { alarmToEdit = null },
-            onSave = { seconds, name, note, tags ->
-                viewModel.updateAlarmDetails(alarm, seconds, name, note, tags)
+            onSave = { seconds, name, note, oneTime, tags ->
+                viewModel.updateAlarmDetails(alarm, seconds, name, note, oneTime, tags)
                 alarmToEdit = null
                 showSavedNotice(
                     alarm.enabled,
@@ -434,12 +447,16 @@ fun AlarmScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column {
                         Text(
-                            text = timeFormatter.format(LocalTime.ofSecondOfDay(alarm.time.toLong())),
+                            text = clockFormatter.format(LocalTime.ofSecondOfDay(alarm.time.toLong())),
                             style = MaterialTheme.typography.titleMedium,
                         )
                         alarm.fireDate?.let { epochDay ->
                             Text(
-                                text = formatFireDate(epochDay),
+                                text = formatFireDate(
+                                    epochDay,
+                                    fireDateFormatter,
+                                    fireDateWithYearFormatter,
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -494,7 +511,7 @@ fun AlarmScreen(
                         stringResource(
                             R.string.alarm_auto_delete_warning_text,
                             alarm.name.ifBlank {
-                                timeFormatter.format(LocalTime.ofSecondOfDay(alarm.time.toLong()))
+                                clockFormatter.format(LocalTime.ofSecondOfDay(alarm.time.toLong()))
                             },
                         )
                     } else {
@@ -527,9 +544,12 @@ fun AlarmScreen(
             onRefresh = { permissionStatus = AlarmPermissions.read(context) },
             onRequestNotifications = requestNotifications,
             onTestAlarm = {
-                if (AlarmScheduler.scheduleTestAlarm(context)) {
-                    Toast.makeText(context, testScheduledMessage, Toast.LENGTH_SHORT).show()
+                val message = when (AlarmScheduler.scheduleTestAlarm(context)) {
+                    is ScheduleResult.Scheduled -> testScheduledMessage
+                    ScheduleResult.ExactPermissionDenied -> testExactMessage
+                    else -> testFailedMessage
                 }
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
             },
         )
     }
@@ -596,7 +616,12 @@ private fun AlarmStackCard(
                 Surface(
                     modifier = Modifier
                         .matchParentSize()
-                        .offset(y = StackPeekStep * depth * (1f - expansion)),
+                        .offset {
+                            IntOffset(
+                                x = 0,
+                                y = (StackPeekStep * depth * (1f - expansion)).roundToPx(),
+                            )
+                        },
                     shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shadowElevation = 4.dp,
@@ -659,7 +684,12 @@ private fun AlarmRow(
     val tagColors = tags.mapNotNull { tag ->
         if (tag.color == 0) null else Color(tag.color)
     }
-    val fireDateLabel = alarm.fireDate?.let(::formatFireDate)
+    val clockFormatter = rememberClockFormatter()
+    val fireDateFormatter = rememberDatePatternFormatter("MMMdEEEE")
+    val fireDateWithYearFormatter = rememberDatePatternFormatter("yMMMdEEEE")
+    val fireDateLabel = alarm.fireDate?.let {
+        formatFireDate(it, fireDateFormatter, fireDateWithYearFormatter)
+    }
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -691,7 +721,7 @@ private fun AlarmRow(
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
-                            text = timeFormatter.format(LocalTime.ofSecondOfDay(alarm.time.toLong())),
+                            text = clockFormatter.format(LocalTime.ofSecondOfDay(alarm.time.toLong())),
                             style = MaterialTheme.typography.displaySmall,
                             fontWeight = FontWeight.Medium,
                             color = textColor,
@@ -701,6 +731,14 @@ private fun AlarmRow(
                                 text = fireDateLabel,
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
+                            )
+                        }
+                        if (alarm.oneTime) {
+                            Text(
+                                text = stringResource(R.string.alarm_one_time_badge),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.tertiary,
                                 modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
                             )
                         }
@@ -766,11 +804,12 @@ private fun AddAlarmDialog(
     allTags: List<Tag>,
     timePickerStyle: TimePickerStyle,
     onDismiss: () -> Unit,
-    onSave: (Int, String, String, List<Tag>) -> Unit,
+    onSave: (Int, String, String, Boolean, List<Tag>) -> Unit,
 ) {
     var secondsOfDay by rememberSaveable { mutableIntStateOf(defaultAlarmTime()) }
     var name by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
+    var oneTime by rememberSaveable { mutableStateOf(false) }
     var selectedTagIds by rememberSaveable { mutableStateOf(longArrayOf()) }
     var showTimePicker by remember { mutableStateOf(false) }
 
@@ -814,6 +853,10 @@ private fun AddAlarmDialog(
                     label = { Text(stringResource(R.string.alarm_note_label)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                OneTimeAlarmToggle(
+                    checked = oneTime,
+                    onCheckedChange = { oneTime = it },
+                )
                 TagPicker(
                     allTags = allTags,
                     selectedTags = selectedTags,
@@ -827,7 +870,15 @@ private fun AddAlarmDialog(
                         Text(stringResource(R.string.cancel))
                     }
                     TextButton(
-                        onClick = { onSave(secondsOfDay, name.trim(), note.trim(), selectedTags) },
+                        onClick = {
+                            onSave(
+                                secondsOfDay,
+                                name.trim(),
+                                note.trim(),
+                                oneTime,
+                                selectedTags,
+                            )
+                        },
                     ) {
                         Text(stringResource(R.string.save))
                     }
@@ -856,11 +907,12 @@ private fun EditAlarmDialog(
     initialTags: List<Tag>,
     timePickerStyle: TimePickerStyle,
     onDismiss: () -> Unit,
-    onSave: (Int, String, String, List<Tag>) -> Unit,
+    onSave: (Int, String, String, Boolean, List<Tag>) -> Unit,
 ) {
     var secondsOfDay by rememberSaveable(alarm.id) { mutableIntStateOf(alarm.time) }
     var name by rememberSaveable(alarm.id) { mutableStateOf(alarm.name) }
     var note by rememberSaveable(alarm.id) { mutableStateOf(alarm.note) }
+    var oneTime by rememberSaveable(alarm.id) { mutableStateOf(alarm.oneTime) }
     var selectedTagIds by rememberSaveable(alarm.id) {
         mutableStateOf(initialTags.map { it.id }.toLongArray())
     }
@@ -906,6 +958,10 @@ private fun EditAlarmDialog(
                     label = { Text(stringResource(R.string.alarm_note_label)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                OneTimeAlarmToggle(
+                    checked = oneTime,
+                    onCheckedChange = { oneTime = it },
+                )
                 TagPicker(
                     allTags = allTags,
                     selectedTags = selectedTags,
@@ -920,7 +976,13 @@ private fun EditAlarmDialog(
                     }
                     TextButton(
                         onClick = {
-                            onSave(secondsOfDay, name.trim(), note.trim(), selectedTags)
+                            onSave(
+                                secondsOfDay,
+                                name.trim(),
+                                note.trim(),
+                                oneTime,
+                                selectedTags,
+                            )
                         },
                     ) {
                         Text(stringResource(R.string.save))
@@ -944,12 +1006,37 @@ private fun EditAlarmDialog(
 }
 
 @Composable
+private fun OneTimeAlarmToggle(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.alarm_one_time_label),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                text = stringResource(R.string.alarm_one_time_helper),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
 private fun TimeSlotButton(
     label: String,
     secondsOfDay: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val clockFormatter = rememberClockFormatter()
     OutlinedButton(onClick = onClick, modifier = modifier) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -961,7 +1048,7 @@ private fun TimeSlotButton(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = timeFormatter.format(LocalTime.ofSecondOfDay(secondsOfDay.toLong())),
+                text = clockFormatter.format(LocalTime.ofSecondOfDay(secondsOfDay.toLong())),
                 style = MaterialTheme.typography.titleMedium,
             )
         }
