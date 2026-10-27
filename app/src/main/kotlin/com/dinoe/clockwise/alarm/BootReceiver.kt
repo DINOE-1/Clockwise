@@ -27,9 +27,16 @@ class BootReceiver : BroadcastReceiver() {
         val appContext = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                AlarmScheduler.rescheduleAllEnabled(appContext)
-            } catch (e: Exception) {
-                Log.e(TAG, "Unable to restore alarms for $action", e)
+                try {
+                    AlarmScheduler.rescheduleAllEnabled(appContext)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Unable to restore alarms for $action", e)
+                }
+                try {
+                    ReminderScheduler.rescheduleAllUpcoming(appContext)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Unable to restore event reminders for $action", e)
+                }
             } finally {
                 pendingResult.finish()
             }

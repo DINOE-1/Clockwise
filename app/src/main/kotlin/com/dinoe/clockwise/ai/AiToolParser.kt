@@ -30,6 +30,8 @@ data class AlarmDraft(
     val date: LocalDate?,
     val name: String,
     val note: String,
+    val enabled: Boolean,
+    val oneTime: Boolean,
     val tags: List<TagRef>,
 )
 
@@ -44,6 +46,7 @@ data class EventDraft(
     val repeatDays: Set<Int>,
     val repeatUntil: LocalDate?,
     val occurrenceCount: Int,
+    val reminderMinutes: Int,
     val tags: List<TagRef>,
 ) {
     fun recurrenceRule(): RecurrenceRule = RecurrenceRule(
@@ -60,11 +63,13 @@ data class AlarmUpdateDraft(
     val name: String,
     val note: String,
     val enabled: Boolean,
+    val oneTime: Boolean,
     val tags: List<TagRef>,
     val previousTime: LocalTime,
     val previousFireDate: LocalDate?,
     val previousName: String,
     val previousEnabled: Boolean,
+    val previousOneTime: Boolean,
 )
 
 data class AlarmDeleteDraft(
@@ -84,6 +89,7 @@ data class EventUpdateDraft(
     val start: LocalTime,
     val end: LocalTime,
     val withAlarm: Boolean,
+    val reminderMinutes: Int?,
     val tags: List<TagRef>,
     val affectedCount: Int,
     val previousTitle: String,
@@ -91,6 +97,7 @@ data class EventUpdateDraft(
     val previousStart: LocalTime,
     val previousEnd: LocalTime,
     val previousWithAlarm: Boolean,
+    val previousReminderMinutes: Int,
     val isSeries: Boolean,
 )
 
@@ -268,6 +275,7 @@ class AiToolParser(
             alarm.note
         }
         val enabled = item.booleanOrNull("enabled") ?: alarm.enabled
+        val oneTime = item.booleanOrNull("oneTime") ?: alarm.oneTime
         val tags = if (item.containsKey("tags")) {
             parseTags(item["tags"], "alarms[$index].tags")
         } else {
@@ -280,11 +288,13 @@ class AiToolParser(
             name = name,
             note = note,
             enabled = enabled,
+            oneTime = oneTime,
             tags = tags,
             previousTime = LocalTime.ofSecondOfDay(alarm.time.toLong()),
             previousFireDate = previousFireDate,
             previousName = alarm.name,
             previousEnabled = alarm.enabled,
+            previousOneTime = alarm.oneTime,
         )
     }
 
@@ -337,6 +347,7 @@ class AiToolParser(
         val targetIds = targets.map { it.id }.toSet()
         val withAlarm = item.booleanOrNull("withAlarm")
             ?: alarmsById.values.any { it.eventId == event.id }
+        val reminderMinutes = parseReminderMinutes(item, "events[$index].reminderMinutes")
         val tags = if (item.containsKey("tags")) {
             parseTags(item["tags"], "events[$index].tags")
         } else {
@@ -351,6 +362,7 @@ class AiToolParser(
             start = start,
             end = end,
             withAlarm = withAlarm,
+            reminderMinutes = reminderMinutes,
             tags = tags,
             affectedCount = targets.size,
             previousTitle = event.title,
@@ -358,6 +370,7 @@ class AiToolParser(
             previousStart = LocalTime.ofSecondOfDay(event.start.toLong()),
             previousEnd = LocalTime.ofSecondOfDay(event.end.toLong()),
             previousWithAlarm = alarmsById.values.any { it.eventId in targetIds },
+            previousReminderMinutes = event.reminderMinutes,
             isSeries = isSeries,
         )
     }
@@ -445,8 +458,18 @@ class AiToolParser(
         }
         val name = item.stringOrNull("name")?.trim().orEmpty().take(100)
         val note = item.stringOrNull("note")?.trim().orEmpty().take(500)
+        val enabled = item.booleanOrNull("enabled") ?: true
+        val oneTime = item.booleanOrNull("oneTime") ?: false
         val tags = parseTags(item["tags"], "alarms[$index].tags")
-        return AlarmDraft(time = time, date = date, name = name, note = note, tags = tags)
+        return AlarmDraft(
+            time = time,
+            date = date,
+            name = name,
+            note = note,
+            enabled = enabled,
+            oneTime = oneTime,
+            tags = tags,
+        )
     }
 
     private fun parseEvent(element: JsonElement, index: Int): EventDraft {
@@ -465,6 +488,8 @@ class AiToolParser(
             throw error("invalid_time_range", "events[$index].end must be after start")
         }
         val withAlarm = item.booleanOrNull("withAlarm") ?: false
+        val reminderMinutes = parseReminderMinutes(item, "events[$index].reminderMinutes")
+            ?: Event.REMINDER_OFF
         val repeat = item["repeat"]
         val repeatType: Int
         val repeatDays: Set<Int>
@@ -584,8 +609,20 @@ class AiToolParser(
             repeatDays = repeatDays,
             repeatUntil = repeatUntil,
             occurrenceCount = occurrences,
+            reminderMinutes = reminderMinutes,
             tags = tags,
         )
+    }
+
+    private fun parseReminderMinutes(item: JsonObject, label: String): Int? {
+        if (!item.containsKey("reminderMinutes")) return null
+        val value = (item["reminderMinutes"] as? JsonPrimitive)?.intOrNull
+        if (value == null ||
+            (value != Event.REMINDER_OFF && value !in Event.REMINDER_MINUTE_OPTIONS)
+        ) {
+            throw error("invalid_reminder", "$label must be 0, 5, 10 or 30")
+        }
+        return value
     }
 
     private fun parseTags(element: JsonElement?, field: String): List<TagRef> {

@@ -174,6 +174,7 @@ class AiSettingsViewModel(application: Application) : AndroidViewModel(applicati
         val base = when (kind) {
             AiErrorKind.MISSING_KEY -> app.getString(R.string.ai_error_missing_key)
             AiErrorKind.UNAUTHORIZED -> app.getString(R.string.ai_error_unauthorized)
+            AiErrorKind.INVALID_REQUEST -> app.getString(R.string.ai_error_invalid_request)
             AiErrorKind.INSUFFICIENT_CREDIT -> app.getString(R.string.ai_error_credit)
             AiErrorKind.MODEL_NOT_FOUND -> app.getString(R.string.ai_error_model_not_found)
             AiErrorKind.RATE_LIMITED -> app.getString(R.string.ai_error_rate_limited)

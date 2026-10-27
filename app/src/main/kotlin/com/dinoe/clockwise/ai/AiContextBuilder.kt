@@ -142,6 +142,7 @@ class AiContextBuilder {
                     AiTokenBudget.estimateTokens(call.name) +
                         AiTokenBudget.estimateTokens(call.arguments)
                 } + AiTokenBudget.estimateTokens(message.reasoningContent),
+                imageCount = message.images.size,
             )
         }
 }

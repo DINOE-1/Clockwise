@@ -73,6 +73,8 @@ data class AiModelInfo(
     val contextLength: Long? = null,
     // Empty when the provider does not advertise endpoints (DeepSeek) or the field is absent.
     val supportedEndpoints: List<String> = emptyList(),
+    // Null when the model catalog does not advertise input modalities.
+    val supportsImages: Boolean? = null,
 )
 
 data class AiProviderPreset(
@@ -101,7 +103,11 @@ data class AiProviderConfig(
     val models: List<AiModelInfo> = preset.fallbackModels,
     val modelsFetchedAt: Long = 0L,
     val reasoningEffort: AiReasoningEffort = AiReasoningEffort.LOW,
-)
+) {
+    /** False only when the catalog explicitly says the selected model takes no image input. */
+    val modelSupportsImages: Boolean?
+        get() = models.firstOrNull { it.id == modelId }?.supportsImages
+}
 
 data class AiConfig(
     val activeProviderId: AiProviderId,

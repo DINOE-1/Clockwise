@@ -1,5 +1,10 @@
 package com.dinoe.clockwise.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -72,6 +77,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -82,6 +88,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -126,6 +133,27 @@ fun CalendarScreen(
     val viewMode = viewModel.viewMode
     val errorMessage = viewModel.errorMessage
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val permissionScope = rememberCoroutineScope()
+    val reminderPermissionDenied = stringResource(R.string.reminder_permission_denied)
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            permissionScope.launch {
+                snackbarHostState.showSnackbar(reminderPermissionDenied)
+            }
+        }
+    }
+    val ensureReminderPermission: (Int) -> Unit = { reminderMinutes ->
+        if (reminderMinutes > 0 &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     LaunchedEffect(errorMessage) {
         val message = errorMessage ?: return@LaunchedEffect
@@ -209,7 +237,7 @@ fun CalendarScreen(
                 showAddDialog = false
                 addDialogInitialTimes = null
             },
-            onSave = { title, note, start, end, withAlarm, tags, repeat ->
+            onSave = { title, note, start, end, withAlarm, reminderMinutes, tags, repeat ->
                 viewModel.addEvent(
                     title = title,
                     note = note,
@@ -219,7 +247,9 @@ fun CalendarScreen(
                     withAlarm = withAlarm,
                     tags = tags,
                     repeat = repeat,
+                    reminderMinutes = reminderMinutes,
                 )
+                ensureReminderPermission(reminderMinutes)
                 showAddDialog = false
                 addDialogInitialTimes = null
             },
@@ -234,7 +264,7 @@ fun CalendarScreen(
             initialTags = eventTagMap[event.id].orEmpty(),
             initialWithAlarm = alarms.any { it.eventId == event.id },
             onDismiss = { eventToEdit = null },
-            onSave = { title, note, date, start, end, withAlarm, tags, scope ->
+            onSave = { title, note, date, start, end, withAlarm, reminderMinutes, tags, scope ->
                 viewModel.updateEventScoped(
                     event = event,
                     scope = scope,
@@ -245,7 +275,9 @@ fun CalendarScreen(
                     end = end,
                     withAlarm = withAlarm,
                     tags = tags,
+                    reminderMinutes = reminderMinutes,
                 )
+                ensureReminderPermission(reminderMinutes)
                 eventToEdit = null
             },
         )
@@ -1335,6 +1367,7 @@ private fun AddEventDialog(
         start: LocalTime,
         end: LocalTime,
         withAlarm: Boolean,
+        reminderMinutes: Int,
         tags: List<Tag>,
         repeat: RecurrenceRule,
     ) -> Unit,
@@ -1349,6 +1382,7 @@ private fun AddEventDialog(
         mutableIntStateOf(initialEndSeconds ?: defaultEnd)
     }
     var withAlarm by rememberSaveable { mutableStateOf(false) }
+    var reminderMinutes by rememberSaveable { mutableIntStateOf(Event.REMINDER_OFF) }
     var selectedTagIds by rememberSaveable { mutableStateOf(longArrayOf()) }
     var repeatType by rememberSaveable { mutableIntStateOf(Event.REPEAT_NONE) }
     var repeatDayIds by rememberSaveable {
@@ -1510,6 +1544,10 @@ private fun AddEventDialog(
                         }
                     }
                 }
+                ReminderPicker(
+                    reminderMinutes = reminderMinutes,
+                    onReminderChange = { reminderMinutes = it },
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1542,6 +1580,7 @@ private fun AddEventDialog(
                                 LocalTime.ofSecondOfDay(startSeconds.toLong()),
                                 LocalTime.ofSecondOfDay(endSeconds.toLong()),
                                 withAlarm,
+                                reminderMinutes,
                                 selectedTags,
                                 repeatRule,
                             )
@@ -1600,6 +1639,7 @@ private fun EditEventDialog(
         start: LocalTime,
         end: LocalTime,
         withAlarm: Boolean,
+        reminderMinutes: Int,
         tags: List<Tag>,
         scope: EventSeriesScope,
     ) -> Unit,
@@ -1610,6 +1650,9 @@ private fun EditEventDialog(
     var startSeconds by rememberSaveable(event.id) { mutableIntStateOf(event.start) }
     var endSeconds by rememberSaveable(event.id) { mutableIntStateOf(event.end) }
     var withAlarm by rememberSaveable(event.id) { mutableStateOf(initialWithAlarm) }
+    var reminderMinutes by rememberSaveable(event.id) {
+        mutableIntStateOf(event.reminderMinutes)
+    }
     var selectedTagIds by rememberSaveable(event.id) {
         mutableStateOf(initialTags.map { it.id }.toLongArray())
     }
@@ -1702,6 +1745,10 @@ private fun EditEventDialog(
                     selectedTags = selectedTags,
                     onToggle = onTagToggle,
                 )
+                ReminderPicker(
+                    reminderMinutes = reminderMinutes,
+                    onReminderChange = { reminderMinutes = it },
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1760,6 +1807,7 @@ private fun EditEventDialog(
                                 LocalTime.ofSecondOfDay(startSeconds.toLong()),
                                 LocalTime.ofSecondOfDay(endSeconds.toLong()),
                                 withAlarm,
+                                reminderMinutes,
                                 selectedTags,
                                 scope,
                             )
@@ -1811,6 +1859,43 @@ private fun EditEventDialog(
                 timeField = null
             },
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ReminderPicker(
+    reminderMinutes: Int,
+    onReminderChange: (Int) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = stringResource(R.string.event_reminder_label),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = reminderMinutes == Event.REMINDER_OFF,
+                onClick = { onReminderChange(Event.REMINDER_OFF) },
+                label = { Text(stringResource(R.string.reminder_off)) },
+            )
+            Event.REMINDER_MINUTE_OPTIONS.forEach { minutes ->
+                FilterChip(
+                    selected = reminderMinutes == minutes,
+                    onClick = { onReminderChange(minutes) },
+                    label = {
+                        Text(stringResource(R.string.reminder_minutes_before, minutes))
+                    },
+                )
+            }
+        }
+        if (reminderMinutes > 0) {
+            Text(
+                text = stringResource(R.string.event_reminder_helper),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

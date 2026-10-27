@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.withTransaction
 import com.dinoe.clockwise.ClockwiseApp
 import com.dinoe.clockwise.alarm.AlarmScheduler
+import com.dinoe.clockwise.alarm.ReminderScheduler
 import com.dinoe.clockwise.alarm.ScheduleResult
 import java.time.LocalDate
 import java.time.LocalTime
@@ -110,8 +111,10 @@ class ScheduleWriter(context: Context) {
         withAlarm: Boolean,
         tags: List<Tag>,
         repeat: RecurrenceRule = RecurrenceRule(Event.REPEAT_NONE),
+        reminderMinutes: Int = Event.REMINDER_OFF,
     ): EventCreation {
         require(start < end) { "Event end must be after its start" }
+        require(isValidReminder(reminderMinutes)) { "Invalid reminder: $reminderMinutes" }
         val selectedTags = tags.take(MAX_TAGS_PER_ITEM)
         val repeatPlan = planRecurrence(date, repeat)
         if (repeatPlan.limitReached) {
@@ -134,6 +137,7 @@ class ScheduleWriter(context: Context) {
             end = end.toSecondOfDay(),
             repeatType = repeat.type,
             repeatDays = repeatDays,
+            reminderMinutes = reminderMinutes,
         )
         val occurrenceCount = 1 + repeatPlan.dates.size
 
@@ -194,6 +198,7 @@ class ScheduleWriter(context: Context) {
         }
 
         val alarmCreations = persisted.second.map { alarm -> finalizeAlarm(alarm) }
+        persisted.first.forEach { event -> ReminderScheduler.schedule(app, event) }
         return EventCreation(events = persisted.first, alarms = alarmCreations)
     }
 
@@ -259,8 +264,12 @@ class ScheduleWriter(context: Context) {
         end: LocalTime,
         withAlarm: Boolean,
         tags: List<Tag>,
+        reminderMinutes: Int? = null,
     ): EventMutation {
         require(start < end) { "Event end must be after its start" }
+        if (reminderMinutes != null) {
+            require(isValidReminder(reminderMinutes)) { "Invalid reminder: $reminderMinutes" }
+        }
         if (scope == EventScope.THIS_EVENT) {
             return applyMutation { effects ->
                 syncSingleEvent(
@@ -272,13 +281,14 @@ class ScheduleWriter(context: Context) {
                     end = end,
                     withAlarm = withAlarm,
                     tags = tags,
+                    reminderMinutes = reminderMinutes,
                     effects = effects,
                 )
             }
         }
 
         val deltaDays = date.toEpochDay() - event.date
-        val effects = mutableListOf<AlarmEffect>()
+        val effects = mutableListOf<SchedulerEffect>()
         val mutation = applyMutationMutation(effects) {
             val targets = scopeTargets(event, scope)
             var result = EventMutation()
@@ -297,6 +307,7 @@ class ScheduleWriter(context: Context) {
                     end = end,
                     withAlarm = withAlarm,
                     tags = tags,
+                    reminderMinutes = reminderMinutes,
                     effects = effects,
                 )
             }
@@ -310,7 +321,7 @@ class ScheduleWriter(context: Context) {
         scope: EventScope,
         deleteAlarms: Boolean,
     ): EventMutation {
-        val effects = mutableListOf<AlarmEffect>()
+        val effects = mutableListOf<SchedulerEffect>()
         return applyMutationMutation(effects) {
             var result = EventMutation()
             scopeTargets(event, scope).forEach { target ->
@@ -387,17 +398,24 @@ class ScheduleWriter(context: Context) {
         end: LocalTime,
         withAlarm: Boolean,
         tags: List<Tag>,
-        effects: MutableList<AlarmEffect>,
+        reminderMinutes: Int?,
+        effects: MutableList<SchedulerEffect>,
     ): EventMutation {
         val selectedTags = tags.take(MAX_TAGS_PER_ITEM)
+        val updatedReminder = reminderMinutes ?: event.reminderMinutes
         val updated = event.copy(
             title = title,
             note = note,
             date = date.toEpochDay(),
             start = start.toSecondOfDay(),
             end = end.toSecondOfDay(),
+            reminderMinutes = updatedReminder,
         )
         eventDao.update(updated)
+        effects += SchedulerEffect.CancelReminder(event)
+        if (updatedReminder != Event.REMINDER_OFF) {
+            effects += SchedulerEffect.ScheduleReminder(updated)
+        }
 
         tagDao.clearEventTags(event.id)
         if (selectedTags.isNotEmpty()) {
@@ -431,7 +449,7 @@ class ScheduleWriter(context: Context) {
                     name = title,
                     note = note,
                 )
-                effects += AlarmEffect.Schedule(created)
+                effects += SchedulerEffect.Schedule(created)
                 mutation = mutation.copy(alarmsChanged = 1)
             }
 
@@ -452,12 +470,12 @@ class ScheduleWriter(context: Context) {
                         selectedTags.map { AlarmTagCrossRef(synced.id, it.id) },
                     )
                 }
-                effects += AlarmEffect.Schedule(synced)
+                effects += SchedulerEffect.Schedule(synced)
                 mutation = mutation.copy(alarmsChanged = 1)
             }
 
             !withAlarm && linkedAlarm != null -> {
-                effects += AlarmEffect.Cancel(linkedAlarm)
+                effects += SchedulerEffect.Cancel(linkedAlarm)
                 tagDao.clearAlarmTags(linkedAlarm.id)
                 alarmDao.delete(linkedAlarm)
                 mutation = mutation.copy(deletedAlarms = 1)
@@ -469,12 +487,13 @@ class ScheduleWriter(context: Context) {
     private suspend fun deleteSingleEvent(
         event: Event,
         deleteAlarms: Boolean,
-        effects: MutableList<AlarmEffect>,
+        effects: MutableList<SchedulerEffect>,
     ): EventMutation {
         var mutation = EventMutation(affectedEvents = 1)
+        effects += SchedulerEffect.CancelReminder(event)
         alarmDao.getByEventId(event.id)?.let { alarm ->
             if (deleteAlarms) {
-                effects += AlarmEffect.Cancel(alarm)
+                effects += SchedulerEffect.Cancel(alarm)
                 tagDao.clearAlarmTags(alarm.id)
                 alarmDao.delete(alarm)
                 mutation = mutation.copy(deletedAlarms = 1)
@@ -490,14 +509,14 @@ class ScheduleWriter(context: Context) {
     }
 
     private suspend fun applyMutation(
-        block: suspend (MutableList<AlarmEffect>) -> EventMutation,
+        block: suspend (MutableList<SchedulerEffect>) -> EventMutation,
     ): EventMutation {
-        val effects = mutableListOf<AlarmEffect>()
+        val effects = mutableListOf<SchedulerEffect>()
         return applyMutationMutation(effects) { block(effects) }
     }
 
     private suspend fun applyMutationMutation(
-        effects: MutableList<AlarmEffect>,
+        effects: MutableList<SchedulerEffect>,
         block: suspend () -> EventMutation,
     ): EventMutation {
         val mutation = database.withTransaction { block() }
@@ -505,8 +524,8 @@ class ScheduleWriter(context: Context) {
         var unscheduled = 0
         effects.forEach { effect ->
             when (effect) {
-                is AlarmEffect.Cancel -> AlarmScheduler.cancel(app, effect.alarm)
-                is AlarmEffect.Schedule -> {
+                is SchedulerEffect.Cancel -> AlarmScheduler.cancel(app, effect.alarm)
+                is SchedulerEffect.Schedule -> {
                     val result = AlarmScheduler.schedule(app, effect.alarm)
                     if (result is ScheduleResult.Scheduled) {
                         scheduled++
@@ -515,6 +534,9 @@ class ScheduleWriter(context: Context) {
                         alarmDao.update(effect.alarm.copy(enabled = false, snoozedUntil = null))
                     }
                 }
+
+                is SchedulerEffect.ScheduleReminder -> ReminderScheduler.schedule(app, effect.event)
+                is SchedulerEffect.CancelReminder -> ReminderScheduler.cancel(app, effect.event.id)
             }
         }
         return mutation.copy(
@@ -523,9 +545,17 @@ class ScheduleWriter(context: Context) {
         )
     }
 
-    private sealed interface AlarmEffect {
-        data class Schedule(val alarm: Alarm) : AlarmEffect
+    private fun isValidReminder(reminderMinutes: Int): Boolean =
+        reminderMinutes == Event.REMINDER_OFF ||
+            reminderMinutes in Event.REMINDER_MINUTE_OPTIONS
 
-        data class Cancel(val alarm: Alarm) : AlarmEffect
+    private sealed interface SchedulerEffect {
+        data class Schedule(val alarm: Alarm) : SchedulerEffect
+
+        data class Cancel(val alarm: Alarm) : SchedulerEffect
+
+        data class ScheduleReminder(val event: Event) : SchedulerEffect
+
+        data class CancelReminder(val event: Event) : SchedulerEffect
     }
 }

@@ -101,6 +101,33 @@ class AiToolParserUpdateTest {
     }
 
     @Test
+    fun updatesAlarmOneTime() {
+        val update = parser.parseAlarmUpdates("""{"alarms":[{"id":10,"oneTime":true}]}""")
+            .single()
+        assertTrue(update.oneTime)
+        assertFalse(update.previousOneTime)
+    }
+
+    @Test
+    fun updatesEventReminderAndCanDisableIt() {
+        val enabled = parser.parseEventUpdates(
+            """{"events":[{"id":100,"reminderMinutes":10}]}""",
+        ).single()
+        assertEquals(10, enabled.reminderMinutes ?: -1)
+        assertEquals(0, enabled.previousReminderMinutes)
+
+        val disabled = parser.parseEventUpdates(
+            """{"events":[{"id":100,"reminderMinutes":0}]}""",
+        ).single()
+        assertEquals(0, disabled.reminderMinutes ?: -1)
+
+        val omitted = parser.parseEventUpdates(
+            """{"events":[{"id":100,"title":"New"}]}""",
+        ).single()
+        assertNull(omitted.reminderMinutes)
+    }
+
+    @Test
     fun clearDateConvertsDatedAlarmToPlain() {
         val update = parser.parseAlarmUpdates("""{"alarms":[{"id":12,"clearDate":true}]}""")
             .single()

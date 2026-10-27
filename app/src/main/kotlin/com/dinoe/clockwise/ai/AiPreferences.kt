@@ -19,6 +19,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -98,6 +99,7 @@ class AiPreferences(private val context: Context) {
                         put("id", model.id)
                         put("name", model.name)
                         model.contextLength?.let { put("context", it) }
+                        model.supportsImages?.let { put("image", it) }
                     },
                 )
             }
@@ -142,7 +144,13 @@ class AiPreferences(private val context: Context) {
                 val id = (item["id"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
                 val name = (item["name"] as? JsonPrimitive)?.contentOrNull ?: id
                 val context = (item["context"] as? JsonPrimitive)?.longOrNull
-                AiModelInfo(id = id, name = name, contextLength = context)
+                val supportsImages = (item["image"] as? JsonPrimitive)?.booleanOrNull
+                AiModelInfo(
+                    id = id,
+                    name = name,
+                    contextLength = context,
+                    supportsImages = supportsImages,
+                )
             }
         }.getOrNull()
     }

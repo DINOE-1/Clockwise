@@ -67,10 +67,11 @@ object AiTools {
             add(
                 functionTool(
                     name = CREATE_ALARMS,
-                    description = "Propose creating alarms. Omit date for a one-off alarm at " +
-                        "the next occurrence of time; include date YYYY-MM-DD for a specific " +
-                        "day. For repeating reminders use create_events with withAlarm. The user " +
-                        "must confirm the preview.",
+                    description = "Propose creating alarms. Omit date for the next occurrence " +
+                        "of time; include date YYYY-MM-DD for a specific day. oneTime deletes " +
+                        "the alarm after it rings; enabled=false creates it switched off. For " +
+                        "repeating reminders use create_events with withAlarm. The user must " +
+                        "confirm the preview.",
                     parameters = buildJsonObject {
                         put("type", "object")
                         putJsonObject("properties") {
@@ -96,6 +97,20 @@ object AiTools {
                                             put("description", "Short display name")
                                         }
                                         putJsonObject("note") { put("type", "string") }
+                                        putJsonObject("enabled") {
+                                            put("type", "boolean")
+                                            put(
+                                                "description",
+                                                "Defaults to true; false creates a disabled alarm",
+                                            )
+                                        }
+                                        putJsonObject("oneTime") {
+                                            put("type", "boolean")
+                                            put(
+                                                "description",
+                                                "Delete the alarm after it rings; default false",
+                                            )
+                                        }
                                         putJsonObject("tags") {
                                             put("type", "array")
                                             put("description", "Existing tag names only")
@@ -116,7 +131,9 @@ object AiTools {
                 functionTool(
                     name = CREATE_EVENTS,
                     description = "Propose creating calendar events. Recurrence none/daily/weekly; " +
-                        "daily and weekly require until. withAlarm creates an alarm at each start.",
+                        "daily and weekly require until. withAlarm creates an alarm at each start. " +
+                        "reminderMinutes 5/10/30 shows a notification before each occurrence; 0 " +
+                        "or omitted disables it.",
                     parameters = buildJsonObject {
                         put("type", "object")
                         putJsonObject("properties") {
@@ -132,6 +149,19 @@ object AiTools {
                                         putJsonObject("start") { put("type", "string") }
                                         putJsonObject("end") { put("type", "string") }
                                         putJsonObject("withAlarm") { put("type", "boolean") }
+                                        putJsonObject("reminderMinutes") {
+                                            put("type", "integer")
+                                            putJsonArray("enum") {
+                                                add(0)
+                                                add(5)
+                                                add(10)
+                                                add(30)
+                                            }
+                                            put(
+                                                "description",
+                                                "Notification minutes before the start; 0 disables",
+                                            )
+                                        }
                                         putJsonObject("repeat") {
                                             put("type", "object")
                                             putJsonObject("properties") {
@@ -183,7 +213,8 @@ object AiTools {
                     name = UPDATE_ALARMS,
                     description = "Update existing plain alarms. Call list_alarms first for ids. " +
                         "Omitted fields keep their value; tags replace the full list; " +
-                        "clearDate removes a date. Event-linked alarms can only toggle enabled.",
+                        "clearDate removes a date; oneTime switches delete-after-ring. " +
+                        "Event-linked alarms can only toggle enabled.",
                     parameters = buildJsonObject {
                         put("type", "object")
                         putJsonObject("properties") {
@@ -211,6 +242,10 @@ object AiTools {
                                         putJsonObject("name") { put("type", "string") }
                                         putJsonObject("note") { put("type", "string") }
                                         putJsonObject("enabled") { put("type", "boolean") }
+                                        putJsonObject("oneTime") {
+                                            put("type", "boolean")
+                                            put("description", "Delete the alarm after it rings")
+                                        }
                                         putJsonObject("tags") {
                                             put("type", "array")
                                             putJsonObject("items") { put("type", "string") }
@@ -248,7 +283,8 @@ object AiTools {
                 functionTool(
                     name = UPDATE_EVENTS,
                     description = "Update existing events. Call list_events first for ids. " +
-                        "Omitted fields keep their value; tags replace the full list; repeat " +
+                        "Omitted fields keep their value; tags replace the full list; " +
+                        "reminderMinutes 0/5/10/30 changes the notification reminder; repeat " +
                         "rules cannot be changed. Date cannot change with entire_series.",
                     parameters = buildJsonObject {
                         put("type", "object")
@@ -282,6 +318,19 @@ object AiTools {
                                             put("description", "HH:mm")
                                         }
                                         putJsonObject("withAlarm") { put("type", "boolean") }
+                                        putJsonObject("reminderMinutes") {
+                                            put("type", "integer")
+                                            putJsonArray("enum") {
+                                                add(0)
+                                                add(5)
+                                                add(10)
+                                                add(30)
+                                            }
+                                            put(
+                                                "description",
+                                                "Notification minutes before the start; 0 disables",
+                                            )
+                                        }
                                         putJsonObject("tags") {
                                             put("type", "array")
                                             putJsonObject("items") { put("type", "string") }

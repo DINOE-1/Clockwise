@@ -16,6 +16,9 @@ sealed interface AiChatItem {
     data class User(
         override val id: Long,
         val text: String,
+        // Small JPEG thumbnail (base64), kept only for the transcript. The full image is sent to
+        // the model once and never stored.
+        val image: String? = null,
     ) : AiChatItem
 
     data class Assistant(

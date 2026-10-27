@@ -13,6 +13,14 @@ class AiTokenBudgetTest {
     }
 
     @Test
+    fun countsImagesAsInputTokens() {
+        assertEquals(
+            AiTokenBudget.estimateMessageTokens("hi") + AiTokenBudget.IMAGE_INPUT_TOKENS,
+            AiTokenBudget.estimateMessageTokens("hi", imageCount = 1),
+        )
+    }
+
+    @Test
     fun truncatesByEstimatedTokens() {
         val text = "你好你好你好你好"
         val truncated = AiTokenBudget.truncateToTokens(text, 4)

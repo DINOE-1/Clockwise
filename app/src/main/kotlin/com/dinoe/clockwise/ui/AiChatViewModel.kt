@@ -1,6 +1,7 @@
 package com.dinoe.clockwise.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -11,6 +12,7 @@ import androidx.room.withTransaction
 import com.dinoe.clockwise.ClockwiseApp
 import com.dinoe.clockwise.R
 import com.dinoe.clockwise.alarm.AlarmScheduler
+import com.dinoe.clockwise.alarm.ReminderScheduler
 import com.dinoe.clockwise.ai.AiApiException
 import com.dinoe.clockwise.ai.AiChatItem
 import com.dinoe.clockwise.ai.AiChatSessionCodec
@@ -18,6 +20,8 @@ import com.dinoe.clockwise.ai.AiConfig
 import com.dinoe.clockwise.ai.AiContextBuilder
 import com.dinoe.clockwise.ai.AiContextOverflowException
 import com.dinoe.clockwise.ai.AiErrorKind
+import com.dinoe.clockwise.ai.AiImageAttachment
+import com.dinoe.clockwise.ai.AiImageProcessor
 import com.dinoe.clockwise.ai.AiPrompt
 import com.dinoe.clockwise.ai.AiProviderConfig
 import com.dinoe.clockwise.ai.AiSessionState
@@ -29,6 +33,7 @@ import com.dinoe.clockwise.ai.AiUsage
 import com.dinoe.clockwise.ai.AlarmDeleteDraft
 import com.dinoe.clockwise.ai.AlarmDraft
 import com.dinoe.clockwise.ai.AlarmUpdateDraft
+import com.dinoe.clockwise.ai.ChatImage
 import com.dinoe.clockwise.ai.ChatMessage
 import com.dinoe.clockwise.ai.ChatRole
 import com.dinoe.clockwise.ai.ChatToolCall
@@ -83,6 +88,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     private val alarmDao = app.database.alarmDao()
     private val eventDao = app.database.eventDao()
     private val chatSessionDao = app.database.chatSessionDao()
+    private val imageProcessor = AiImageProcessor(app)
 
     val sessions: StateFlow<List<AiChatSessionSummary>> = chatSessionDao.observeSummaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -106,6 +112,10 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var activeSessionId by mutableStateOf<Long?>(null)
         private set
+    var pendingImage by mutableStateOf<AiImageAttachment?>(null)
+        private set
+    var isImageLoading by mutableStateOf(false)
+        private set
 
     private val chatSession = AiSessionState()
     private val contextBuilder = AiContextBuilder()
@@ -113,6 +123,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     private var currentUserText = ""
     private var pendingWrite: PendingWrite? = null
     private var turnJob: Job? = null
+    private var imageJob: Job? = null
     private var lastErrorId: Long? = null
     private var nextItemId = 1L
     private var trimNoticeShown = false
@@ -126,9 +137,10 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     val needsSetup: Boolean get() = config?.active()?.hasKey == false
     val hasPendingProposal: Boolean get() = pendingProposalId != null
     val canSend: Boolean
-        get() = input.isNotBlank() &&
+        get() = (input.isNotBlank() || pendingImage != null) &&
             !isBusy &&
             !isRestoring &&
+            !isImageLoading &&
             pendingProposalId == null &&
             config?.active()?.hasKey == true
 
@@ -143,22 +155,60 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         input = value.take(AiTokenBudget.MAX_USER_CHARS)
     }
 
+    fun attachImage(uri: Uri) {
+        if (isBusy || isRestoring || isImageLoading || pendingProposalId != null) return
+        imageJob?.cancel()
+        imageJob = viewModelScope.launch {
+            isImageLoading = true
+            try {
+                pendingImage = imageProcessor.load(uri)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                addNotice(app.getString(R.string.ai_image_load_failed))
+            } finally {
+                isImageLoading = false
+                imageJob = null
+            }
+        }
+    }
+
+    fun removeImage() {
+        if (isImageLoading) return
+        pendingImage = null
+    }
+
+    fun showImageUnsupported() {
+        addNotice(app.getString(R.string.ai_image_unsupported))
+    }
+
     fun send() {
-        if (isBusy || isRestoring || pendingProposalId != null) return
+        if (isBusy || isRestoring || isImageLoading || pendingProposalId != null) return
         val provider = activeProvider ?: return
-        val text = input.trim()
-        if (text.isEmpty()) return
+        val typed = input.trim()
+        val image = pendingImage
+        if (typed.isEmpty() && image == null) return
         if (!provider.hasKey) {
             addError(app.getString(R.string.ai_error_missing_key), retryable = false)
             return
         }
+        val text = typed.ifEmpty { app.getString(R.string.ai_image_only_prompt) }
         input = ""
+        pendingImage = null
         lastErrorId = null
         trimNoticeShown = false
         readSummaryThisTurn = null
-        items += AiChatItem.User(nextItemId(), text)
+        items += AiChatItem.User(nextItemId(), text, image?.previewBase64)
         currentUserText = text
-        currentTurn = mutableListOf(ChatMessage(role = ChatRole.USER, content = text))
+        currentTurn = mutableListOf(
+            ChatMessage(
+                role = ChatRole.USER,
+                content = text,
+                images = image?.let {
+                    listOf(ChatImage(base64 = it.requestBase64, mimeType = it.mimeType))
+                }.orEmpty(),
+            ),
+        )
         viewModelScope.launch { persistSafely() }
         startTurn(provider)
     }
@@ -334,6 +384,10 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     private fun startNewDraft() {
         turnJob?.cancel()
         turnJob = null
+        imageJob?.cancel()
+        imageJob = null
+        pendingImage = null
+        isImageLoading = false
         activeSessionId = null
         sessionTitle = AI_CHAT_SESSION_DEFAULT_TITLE
         sessionCreatedAt = System.currentTimeMillis()
@@ -379,6 +433,10 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     private fun restoreFrom(row: AiChatSession) {
         turnJob?.cancel()
         turnJob = null
+        imageJob?.cancel()
+        imageJob = null
+        pendingImage = null
+        isImageLoading = false
         val decoded = AiChatSessionCodec.decode(row.payload)
         val chat = decoded ?: PersistedChat()
         activeSessionId = row.id
@@ -400,7 +458,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         }
         messages.forEach { message ->
             when (message.role) {
-                "user" -> items += AiChatItem.User(nextItemId(), message.text)
+                "user" -> items += AiChatItem.User(nextItemId(), message.text, message.image)
                 "assistant" -> items += AiChatItem.Assistant(nextItemId(), message.text)
             }
         }
@@ -497,7 +555,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     private fun snapshotChat(): PersistedChat {
         val messages = items.mapNotNull { item ->
             when (item) {
-                is AiChatItem.User -> PersistedChatMessage("user", item.text)
+                is AiChatItem.User -> PersistedChatMessage("user", item.text, item.image)
                 is AiChatItem.Assistant -> PersistedChatMessage("assistant", item.text)
                 else -> null
             }
@@ -803,6 +861,8 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         val all = alarmDao.getAll().sortedWith(
             compareBy({ it.time }, { it.fireDate ?: Long.MAX_VALUE }),
         )
+        val tagsById = tagDao.getAll().associateBy { it.id }
+        val alarmTagsById = tagDao.getAlarmTagRefs().groupBy { it.alarmId }
         val shown = all.take(READ_RESULT_LIMIT)
         val body = buildJsonObject {
             put("total", all.size)
@@ -817,9 +877,18 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                                 put("date", LocalDate.ofEpochDay(fireDate).toString())
                             }
                             put("enabled", alarm.enabled)
+                            put("oneTime", alarm.oneTime)
                             put("name", AiTokenBudget.truncateChars(alarm.name, 80))
+                            if (alarm.note.isNotBlank()) {
+                                put("note", AiTokenBudget.truncateChars(alarm.note, 120))
+                            }
                             put("fromEvent", alarm.eventId != null)
                             alarm.eventId?.let { put("eventId", it) }
+                            putJsonArray("tags") {
+                                alarmTagsById[alarm.id].orEmpty()
+                                    .mapNotNull { tagsById[it.tagId] }
+                                    .forEach { add(it.name) }
+                            }
                         },
                     )
                 }
@@ -845,6 +914,8 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         }
         val all = eventDao.getBetween(range.first.toEpochDay(), range.second.toEpochDay())
         val alarmEventIds = alarmDao.getLinkedEventIds().toSet()
+        val tagsById = tagDao.getAll().associateBy { it.id }
+        val eventTagsById = tagDao.getEventTagRefs().groupBy { it.eventId }
         val shown = all.take(READ_RESULT_LIMIT)
         val body = buildJsonObject {
             put("total", all.size)
@@ -858,8 +929,24 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             put("start", formatSeconds(event.start))
                             put("end", formatSeconds(event.end))
                             put("title", AiTokenBudget.truncateChars(event.title, 80))
+                            if (event.note.isNotBlank()) {
+                                put("note", AiTokenBudget.truncateChars(event.note, 120))
+                            }
                             put("repeat", repeatLabel(event.repeatType))
+                            if (event.repeatType == Event.REPEAT_WEEKLY) {
+                                putJsonArray("repeatDays") {
+                                    event.repeatDays.split(',')
+                                        .mapNotNull { it.trim().toIntOrNull() }
+                                        .forEach { add(it) }
+                                }
+                            }
                             put("hasAlarm", event.id in alarmEventIds)
+                            put("reminderMinutes", event.reminderMinutes)
+                            putJsonArray("tags") {
+                                eventTagsById[event.id].orEmpty()
+                                    .mapNotNull { tagsById[it.tagId] }
+                                    .forEach { add(it.name) }
+                            }
                         },
                     )
                 }
@@ -953,10 +1040,14 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             fireDate = draft.date?.toEpochDay(),
                             name = draft.name,
                             note = draft.note,
+                            enabled = draft.enabled,
+                            oneTime = draft.oneTime,
                             tags = draft.tags.map { Tag(id = it.id, name = it.name) },
                         )
                         createdPlainAlarms++
-                        if (creation.scheduled) scheduledAlarms++ else unscheduledAlarms++
+                        if (creation.alarm.enabled) {
+                            if (creation.scheduled) scheduledAlarms++ else unscheduledAlarms++
+                        }
                         if (notes.size < 5) {
                             notes += if (draft.date != null) {
                                 "created ${draft.date} ${draft.time} ${draft.name}".trim()
@@ -976,6 +1067,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             withAlarm = draft.withAlarm,
                             tags = draft.tags.map { Tag(id = it.id, name = it.name) },
                             repeat = draft.recurrenceRule(),
+                            reminderMinutes = draft.reminderMinutes,
                         )
                         createdEvents += creation.events.size
                         createdEventAlarms += creation.alarms.size
@@ -991,6 +1083,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             name = draft.name,
                             note = draft.note,
                             enabled = draft.enabled,
+                            oneTime = draft.oneTime,
                             tags = draft.tags.map { Tag(id = it.id, name = it.name) },
                         )
                         updatedAlarms++
@@ -1021,6 +1114,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             end = draft.end,
                             withAlarm = draft.withAlarm,
                             tags = draft.tags.map { Tag(id = it.id, name = it.name) },
+                            reminderMinutes = draft.reminderMinutes,
                         )
                         updatedEvents += mutation.affectedEvents
                         deletedAlarms += mutation.deletedAlarms
@@ -1092,6 +1186,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
             val alarms = alarmDao.getAll()
             alarms.forEach { alarm -> AlarmScheduler.cancelPending(app, alarm) }
             AlarmScheduler.rescheduleAllEnabled(app)
+            ReminderScheduler.rescheduleAllUpcoming(app)
         }
     }
 
@@ -1129,6 +1224,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         val message = when (e.kind) {
             AiErrorKind.MISSING_KEY -> app.getString(R.string.ai_error_missing_key)
             AiErrorKind.UNAUTHORIZED -> app.getString(R.string.ai_error_unauthorized)
+            AiErrorKind.INVALID_REQUEST -> app.getString(R.string.ai_error_invalid_request)
             AiErrorKind.INSUFFICIENT_CREDIT -> app.getString(R.string.ai_error_credit)
             AiErrorKind.MODEL_NOT_FOUND -> app.getString(R.string.ai_error_model_not_found)
             AiErrorKind.RATE_LIMITED -> app.getString(R.string.ai_error_rate_limited)

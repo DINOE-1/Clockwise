@@ -44,6 +44,25 @@ class AiContextBuilderTest {
     }
 
     @Test
+    fun keepsAttachedImageAndCountsItsTokens() {
+        val built = builder.build(
+            completedTurns = emptyList(),
+            currentTurn = listOf(
+                ChatMessage(
+                    role = ChatRole.USER,
+                    content = "read this",
+                    images = listOf(ChatImage(base64 = "abc")),
+                ),
+            ),
+            dynamicContext = "CURRENT CONTEXT now",
+        )
+        val user = built.messages.last()
+        assertEquals(1, user.images.size)
+        assertTrue(user.content!!.contains("CURRENT CONTEXT"))
+        assertTrue(built.estimatedInputTokens > AiTokenBudget.IMAGE_INPUT_TOKENS)
+    }
+
+    @Test
     fun separateDynamicUserMessageComesImmediatelyBeforeTheFinalUserMessage() {
         val current = listOf(
             ChatMessage(ChatRole.USER, "one"),

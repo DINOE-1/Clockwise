@@ -43,6 +43,13 @@ data class ChatToolCall(
     val arguments: String,
 )
 
+data class ChatImage(
+    val base64: String,
+    val mimeType: String = "image/jpeg",
+) {
+    fun dataUrl(): String = "data:$mimeType;base64,$base64"
+}
+
 data class ChatMessage(
     val role: ChatRole,
     val content: String? = null,
@@ -51,6 +58,9 @@ data class ChatMessage(
     // Reasoning returned by the provider. With tools, DeepSeek-style APIs require this to be
     // echoed back on every earlier assistant message or the next request fails with a 400.
     val reasoningContent: String? = null,
+    // Inline images for this message. OpenAI-compatible vision models expect content to be an
+    // array of parts in that case, which buildMessages() handles.
+    val images: List<ChatImage> = emptyList(),
 )
 
 data class ChatCompletion(
@@ -64,6 +74,7 @@ data class ChatCompletion(
 enum class AiErrorKind {
     MISSING_KEY,
     UNAUTHORIZED,
+    INVALID_REQUEST,
     INSUFFICIENT_CREDIT,
     MODEL_NOT_FOUND,
     RATE_LIMITED,
@@ -173,7 +184,34 @@ class OpenAiChatClient(
                         put("tool_call_id", message.toolCallId ?: "")
                         put("content", message.content ?: "")
                     } else {
-                        put("content", message.content ?: "")
+                        if (message.images.isNotEmpty()) {
+                            put(
+                                "content",
+                                buildJsonArray {
+                                    val text = message.content.orEmpty()
+                                    if (text.isNotEmpty()) {
+                                        add(
+                                            buildJsonObject {
+                                                put("type", "text")
+                                                put("text", text)
+                                            },
+                                        )
+                                    }
+                                    message.images.forEach { image ->
+                                        add(
+                                            buildJsonObject {
+                                                put("type", "image_url")
+                                                putJsonObject("image_url") {
+                                                    put("url", image.dataUrl())
+                                                }
+                                            },
+                                        )
+                                    }
+                                },
+                            )
+                        } else {
+                            put("content", message.content ?: "")
+                        }
                         if (message.role == ChatRole.ASSISTANT && includeReasoningContent) {
                             val reasoning = message.reasoningContent
                             when {
@@ -287,11 +325,17 @@ class OpenAiChatClient(
                 val endpoints = (model["supported_endpoints"] as? JsonArray)
                     ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
                     .orEmpty()
+                val inputModalities = ((model["architecture"] as? JsonObject)
+                    ?.get("input_modalities") as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                    ?: (model["input_modalities"] as? JsonArray)
+                        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
                 AiModelInfo(
                     id = id,
                     name = displayName,
                     contextLength = context,
                     supportedEndpoints = endpoints,
+                    supportsImages = inputModalities?.let { "image" in it },
                 )
             }
         } catch (e: Exception) {
@@ -367,6 +411,7 @@ class OpenAiChatClient(
     private fun errorFor(status: Int, body: String): AiApiException {
         val kind = when {
             status == 401 || status == 403 -> AiErrorKind.UNAUTHORIZED
+            status == 400 || status == 422 -> AiErrorKind.INVALID_REQUEST
             status == 402 -> AiErrorKind.INSUFFICIENT_CREDIT
             status == 404 -> AiErrorKind.MODEL_NOT_FOUND
             status == 429 -> AiErrorKind.RATE_LIMITED

@@ -1,6 +1,12 @@
 package com.dinoe.clockwise.ui
 
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +20,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -59,6 +66,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -111,6 +121,10 @@ fun AiScreen(
         stringResource(R.string.ai_subtitle_unconfigured)
     }
     val messages = viewModel.items
+    val imagePreview = rememberBase64Image(viewModel.pendingImage?.previewBase64)
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> uri?.let(viewModel::attachImage) }
 
     LaunchedEffect(messages.size, viewModel.isBusy) {
         if (messages.isNotEmpty()) {
@@ -191,6 +205,20 @@ fun AiScreen(
                     !viewModel.hasPendingProposal &&
                     !viewModel.isBusy &&
                     !viewModel.isRestoring,
+                imagePreview = imagePreview,
+                imageLoading = viewModel.isImageLoading,
+                onAttach = {
+                    if (active?.modelSupportsImages == false) {
+                        viewModel.showImageUnsupported()
+                    } else {
+                        imagePicker.launch(
+                            PickVisualMediaRequest(
+                                ActivityResultContracts.PickVisualMedia.ImageOnly,
+                            ),
+                        )
+                    }
+                },
+                onRemoveImage = viewModel::removeImage,
                 onSend = viewModel::send,
                 onStop = viewModel::stop,
             )
@@ -237,7 +265,7 @@ fun AiScreen(
                 ) {
                     items(messages, key = { it.id }) { item ->
                         when (item) {
-                            is AiChatItem.User -> UserMessage(item.text)
+                            is AiChatItem.User -> UserMessage(item.text, item.image)
                             is AiChatItem.Assistant -> AssistantMessage(item.text)
                             is AiChatItem.Notice -> NoticeMessage(item.text)
                             is AiChatItem.Error -> ErrorMessage(
@@ -373,6 +401,13 @@ private fun EmptyState(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = stringResource(R.string.ai_image_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+        )
         if (needsSetup) {
             Spacer(modifier = Modifier.height(16.dp))
             SetupCard(onOpenSettings = onOpenSettings)
@@ -415,7 +450,8 @@ private fun EmptyState(
 }
 
 @Composable
-private fun UserMessage(text: String) {
+private fun UserMessage(text: String, image: String?) {
+    val bitmap = rememberBase64Image(image)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
@@ -425,12 +461,29 @@ private fun UserMessage(text: String) {
             color = MaterialTheme.colorScheme.primaryContainer,
             shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
         ) {
-            Text(
-                text = text,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
+            Column {
+                if (bitmap != null) {
+                    val ratio = bitmap.width.toFloat() / bitmap.height
+                    val imageWidth = if (ratio >= 1f) 280.dp else (280f * ratio).dp
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = stringResource(R.string.ai_image_attached),
+                        modifier = Modifier
+                            .padding(start = 6.dp, top = 6.dp, end = 6.dp)
+                            .width(imageWidth)
+                            .clip(RoundedCornerShape(14.dp)),
+                        contentScale = ContentScale.Fit,
+                    )
+                }
+                if (text.isNotBlank()) {
+                    Text(
+                        text = text,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+            }
         }
     }
 }
@@ -695,6 +748,17 @@ private fun AlarmDraftRow(alarm: AlarmDraft) {
                 }}",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            val details = listOfNotNull(
+                if (!alarm.enabled) stringResource(R.string.ai_proposal_disabled) else null,
+                if (alarm.oneTime) stringResource(R.string.alarm_one_time_badge) else null,
+            )
+            if (details.isNotEmpty()) {
+                Text(
+                    text = details.joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (alarm.note.isNotBlank()) {
                 Text(
                     text = alarm.note,
@@ -743,7 +807,12 @@ private fun EventDraftRow(event: EventDraft) {
     } else {
         null
     }
-    val details = listOfNotNull(repeatText, untilText, occurrencesText, alarmText)
+    val reminderText = if (event.reminderMinutes > 0) {
+        stringResource(R.string.ai_proposal_reminder_before, event.reminderMinutes)
+    } else {
+        null
+    }
+    val details = listOfNotNull(repeatText, untilText, occurrencesText, alarmText, reminderText)
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -850,6 +919,16 @@ private fun AlarmUpdateRow(update: AlarmUpdateDraft) {
                     text = stringResource(
                         if (update.enabled) R.string.ai_proposal_enabled
                         else R.string.ai_proposal_disabled,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (update.oneTime != update.previousOneTime) {
+                Text(
+                    text = stringResource(
+                        if (update.oneTime) R.string.ai_proposal_one_time_added
+                        else R.string.ai_proposal_one_time_removed,
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -973,6 +1052,19 @@ private fun EventUpdateRow(update: EventUpdateDraft) {
                     color = MaterialTheme.colorScheme.error,
                 )
             }
+            val reminderChange = update.reminderMinutes
+                ?.takeIf { it != update.previousReminderMinutes }
+            if (reminderChange != null) {
+                Text(
+                    text = stringResource(
+                        R.string.ai_proposal_reminder_change,
+                        reminderLabel(update.previousReminderMinutes),
+                        reminderLabel(reminderChange),
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (update.tags.isNotEmpty()) {
                 Text(
                     text = stringResource(
@@ -1056,6 +1148,14 @@ private fun scopeLabel(scope: EventScope): String = stringResource(
 )
 
 @Composable
+private fun reminderLabel(minutes: Int): String =
+    if (minutes > 0) {
+        stringResource(R.string.ai_proposal_reminder_before, minutes)
+    } else {
+        stringResource(R.string.ai_proposal_reminder_off)
+    }
+
+@Composable
 private fun AiInputBar(
     value: String,
     onValueChange: (String) -> Unit,
@@ -1063,6 +1163,10 @@ private fun AiInputBar(
     isBusy: Boolean,
     pendingProposal: Boolean,
     enabled: Boolean,
+    imagePreview: ImageBitmap?,
+    imageLoading: Boolean,
+    onAttach: () -> Unit,
+    onRemoveImage: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -1070,48 +1174,129 @@ private fun AiInputBar(
         color = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 3.dp,
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.Bottom,
         ) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier.weight(1f),
-                enabled = enabled,
-                placeholder = {
-                    Text(
-                        text = stringResource(
-                            if (pendingProposal) R.string.ai_input_pending else R.string.ai_input_hint,
-                        ),
-                    )
-                },
-                maxLines = 5,
-                shape = MaterialTheme.shapes.extraLarge,
-            )
-            Spacer(modifier = Modifier.size(8.dp))
-            FilledIconButton(
-                onClick = if (isBusy) onStop else onSend,
-                enabled = if (isBusy) !pendingProposal else canSend,
-                modifier = Modifier.size(48.dp),
-            ) {
-                if (isBusy && !pendingProposal) {
+            if (imagePreview != null || imageLoading) {
+                AttachmentPreview(
+                    image = imagePreview,
+                    loading = imageLoading,
+                    onRemove = onRemoveImage,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+            Row(verticalAlignment = Alignment.Bottom) {
+                IconButton(
+                    onClick = onAttach,
+                    enabled = enabled && !imageLoading,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                ) {
                     Icon(
-                        Icons.Filled.Close,
-                        contentDescription = stringResource(R.string.ai_stop),
+                        painter = painterResource(R.drawable.ic_add_photo),
+                        contentDescription = stringResource(R.string.ai_image_attach),
                     )
-                } else {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = stringResource(R.string.ai_send),
-                    )
+                }
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier.weight(1f),
+                    enabled = enabled,
+                    placeholder = {
+                        Text(
+                            text = stringResource(
+                                if (pendingProposal) {
+                                    R.string.ai_input_pending
+                                } else {
+                                    R.string.ai_input_hint
+                                },
+                            ),
+                        )
+                    },
+                    maxLines = 5,
+                    shape = MaterialTheme.shapes.extraLarge,
+                )
+                Spacer(modifier = Modifier.size(8.dp))
+                FilledIconButton(
+                    onClick = if (isBusy) onStop else onSend,
+                    enabled = if (isBusy) !pendingProposal else canSend,
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    if (isBusy && !pendingProposal) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = stringResource(R.string.ai_stop),
+                        )
+                    } else {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = stringResource(R.string.ai_send),
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+@Composable
+private fun AttachmentPreview(
+    image: ImageBitmap?,
+    loading: Boolean,
+    onRemove: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 48.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(MaterialTheme.shapes.medium),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (loading) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else if (image != null) {
+                Image(
+                    bitmap = image,
+                    contentDescription = stringResource(R.string.ai_image_attached),
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+        }
+        Text(
+            text = stringResource(
+                if (loading) R.string.ai_image_processing else R.string.ai_image_ready,
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onRemove, enabled = !loading) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = stringResource(R.string.ai_image_remove),
+            )
+        }
+    }
+}
+
+@Composable
+private fun rememberBase64Image(base64: String?): ImageBitmap? =
+    remember(base64) {
+        base64?.let { encoded ->
+            runCatching {
+                val bytes = Base64.decode(encoded, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
 
 @Composable
 private fun SessionsDialog(

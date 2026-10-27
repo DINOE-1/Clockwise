@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.withTransaction
 import com.dinoe.clockwise.ClockwiseApp
 import com.dinoe.clockwise.alarm.AlarmScheduler
+import com.dinoe.clockwise.alarm.ReminderScheduler
 import com.dinoe.clockwise.alarm.ScheduleResult
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -66,6 +67,7 @@ class BackupRepository(context: Context) {
                             put("occurrenceIndex", event.occurrenceIndex)
                             put("repeatType", event.repeatType)
                             put("repeatDays", event.repeatDays)
+                            put("reminderMinutes", event.reminderMinutes)
                         },
                     )
                 }
@@ -154,6 +156,7 @@ class BackupRepository(context: Context) {
         validateUniqueIds(tagRows.map { it.name }, "tag name")
 
         val oldAlarms = alarmDao.getAll()
+        val oldEvents = eventDao.getAll()
 
         val imported = database.withTransaction {
             tagDao.deleteAllEventTags()
@@ -180,6 +183,7 @@ class BackupRepository(context: Context) {
                         occurrenceIndex = row.occurrenceIndex,
                         repeatType = row.repeatType,
                         repeatDays = row.repeatDays,
+                        reminderMinutes = row.reminderMinutes,
                     ),
                 )
                 eventIdMap[row.id] = newId
@@ -202,6 +206,7 @@ class BackupRepository(context: Context) {
                         occurrenceIndex = row.occurrenceIndex,
                         repeatType = row.repeatType,
                         repeatDays = row.repeatDays,
+                        reminderMinutes = row.reminderMinutes,
                     ),
                 )
             }
@@ -248,6 +253,7 @@ class BackupRepository(context: Context) {
         // Only cancel the old system alarms after the database replacement committed; a failed
         // import leaves the previous data and its scheduled alarms untouched.
         oldAlarms.forEach { alarm -> AlarmScheduler.cancel(app, alarm) }
+        oldEvents.forEach { event -> ReminderScheduler.cancel(app, event.id) }
 
         var scheduled = 0
         var unscheduled = 0
@@ -260,6 +266,7 @@ class BackupRepository(context: Context) {
                 }
             }
         }
+        eventDao.getAll().forEach { event -> ReminderScheduler.schedule(app, event) }
         return BackupImportResult(
             events = imported.first,
             alarms = imported.second,
@@ -285,6 +292,12 @@ class BackupRepository(context: Context) {
         if (repeatType !in Event.REPEAT_NONE..Event.REPEAT_WEEKLY) {
             throw BackupException("Event $id has an invalid repeat type")
         }
+        val reminderMinutes = obj.optionalInt("reminderMinutes") ?: Event.REMINDER_OFF
+        if (reminderMinutes != Event.REMINDER_OFF &&
+            reminderMinutes !in Event.REMINDER_MINUTE_OPTIONS
+        ) {
+            throw BackupException("Event $id has an invalid reminder")
+        }
         return BackupEvent(
             id = id,
             title = obj.optionalString("title").orEmpty(),
@@ -296,6 +309,7 @@ class BackupRepository(context: Context) {
             occurrenceIndex = obj.optionalInt("occurrenceIndex") ?: 0,
             repeatType = repeatType,
             repeatDays = obj.optionalString("repeatDays").orEmpty(),
+            reminderMinutes = reminderMinutes,
         )
     }
 
@@ -386,6 +400,7 @@ class BackupRepository(context: Context) {
         val occurrenceIndex: Int,
         val repeatType: Int,
         val repeatDays: String,
+        val reminderMinutes: Int,
     )
 
     private data class BackupAlarm(

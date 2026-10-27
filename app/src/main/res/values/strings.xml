@@ -16,6 +16,16 @@
     <string name="event_note_label">備註</string>
     <string name="event_alarm_label">自動建立鬧鐘</string>
     <string name="event_alarm_helper">將於活動開始時間自動建立鬧鈴</string>
+    <string name="event_reminder_label">提醒</string>
+    <string name="reminder_off">不提醒</string>
+    <string name="reminder_minutes_before">%1$d 分鐘前</string>
+    <string name="event_reminder_helper">活動開始前以通知提醒。</string>
+    <string name="reminder_permission_denied">未允許通知，提醒不會顯示。</string>
+    <string name="reminder_channel_name">活動提醒</string>
+    <string name="reminder_channel_description">行事曆活動開始前的提醒通知</string>
+    <string name="reminder_notification_title">活動提醒</string>
+    <string name="reminder_notification_body">將於 %1$s 開始</string>
+    <string name="reminder_notification_advance">提前 %1$d 分鐘</string>
     <string name="start_time_label">開始時間</string>
     <string name="end_time_label">結束時間</string>
     <string name="select_time">選擇時間</string>
@@ -117,7 +127,7 @@
     <string name="scope_this_event">此活動</string>
     <string name="scope_this_and_subsequent">此活動與所有後續活動</string>
     <string name="scope_entire_series">此系列的所有活動</string>
-    <string name="scope_all_series_helper">套用至整個系列時,各活動日期保持不變,僅同步名稱、備註、時間、鬧鐘與標籤。</string>
+    <string name="scope_all_series_helper">套用至整個系列時,各活動日期保持不變,僅同步名稱、備註、時間、鬧鐘、提醒與標籤。</string>
     <string name="scope_subsequent_date_helper">變更日期時,後續活動會一起以相同間隔位移。</string>
     <string name="delete_series_confirmation">刪除「%1$s」?將移除 %2$d 個活動。</string>
 
@@ -201,6 +211,15 @@
     <string name="ai_input_pending">請先確認或取消提案</string>
     <string name="ai_send">送出</string>
     <string name="ai_stop">停止</string>
+    <string name="ai_image_attach">附加圖片</string>
+    <string name="ai_image_remove">移除圖片</string>
+    <string name="ai_image_attached">附加的圖片</string>
+    <string name="ai_image_processing">正在處理圖片…</string>
+    <string name="ai_image_ready">圖片已附加，送出後開始辨識</string>
+    <string name="ai_image_hint">也可以上傳課表或活動海報的照片，我會自動辨識並填入活動。</string>
+    <string name="ai_image_only_prompt">請讀取這張圖片中的行程資訊，幫我建立活動。</string>
+    <string name="ai_image_load_failed">無法讀取這張圖片，請換一張再試。</string>
+    <string name="ai_image_unsupported">目前選擇的模型不支援圖片，請到設定改用支援視覺的模型。</string>
     <string name="ai_char_limit">已達 %1$d 字上限</string>
 
     <string name="ai_setup_title">先設定 AI 服務</string>
@@ -227,6 +246,11 @@
     <string name="ai_proposal_events">活動（%1$d）</string>
     <string name="ai_proposal_event_occurrences">共 %1$d 個活動</string>
     <string name="ai_proposal_alarm_at_start">開始時響鈴</string>
+    <string name="ai_proposal_reminder_before">提前 %1$d 分鐘提醒</string>
+    <string name="ai_proposal_reminder_off">關閉提醒</string>
+    <string name="ai_proposal_reminder_change">提醒：%1$s → %2$s</string>
+    <string name="ai_proposal_one_time_added">改為一次性鬧鐘（響鈴後自動刪除）</string>
+    <string name="ai_proposal_one_time_removed">改為一般鬧鐘（響鈴後保留）</string>
     <string name="ai_proposal_repeat_daily">每天重複</string>
     <string name="ai_proposal_repeat_weekly">每週重複：%1$s</string>
     <string name="ai_proposal_until">至 %1$s</string>
@@ -256,6 +280,7 @@
 
     <string name="ai_error_missing_key">尚未設定 API 金鑰，請到設定填入。</string>
     <string name="ai_error_unauthorized">API 金鑰無效或沒有權限，請到設定檢查。</string>
+    <string name="ai_error_invalid_request">服務商拒絕了這個請求，請確認所選模型是否支援圖片，或縮小內容後重試。</string>
     <string name="ai_error_credit">額度不足，請到服務商確認方案或餘額。</string>
     <string name="ai_error_model_not_found">找不到所選模型，請到設定重新選擇。</string>
     <string name="ai_error_rate_limited">請求太頻繁，請稍後再試。</string>

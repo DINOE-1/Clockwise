@@ -22,6 +22,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -46,10 +47,20 @@ private const val TAB_TRANSITION_MILLIS = 300
 private const val TAB_FADE_OUT_MILLIS = 150
 
 @Composable
-fun MainScreen() {
+fun MainScreen(
+    openEventId: Long? = null,
+    onOpenEventConsumed: () -> Unit = {},
+) {
     var selectedTab by rememberSaveable { mutableIntStateOf(TAB_CALENDAR) }
     var pendingEditEventId by remember { mutableStateOf<Long?>(null) }
     var openAiSettingsRequest by remember { mutableStateOf(false) }
+
+    LaunchedEffect(openEventId) {
+        val id = openEventId ?: return@LaunchedEffect
+        pendingEditEventId = id
+        selectedTab = TAB_CALENDAR
+        onOpenEventConsumed()
+    }
 
     Scaffold(
         bottomBar = {

@@ -20,6 +20,8 @@ import kotlinx.serialization.json.putJsonObject
 data class PersistedChatMessage(
     val role: String,
     val text: String,
+    // Base64 thumbnail of an attached photo; large payloads are dropped on encode.
+    val image: String? = null,
 )
 
 /**
@@ -38,6 +40,7 @@ object AiChatSessionCodec {
     const val VERSION = 1
     const val MAX_UI_MESSAGES = 100
     const val MAX_MESSAGE_CHARS = 4_000
+    const val MAX_MESSAGE_IMAGE_CHARS = 160_000
 
     private val json = Json
 
@@ -56,6 +59,9 @@ object AiChatSessionCodec {
                                 "text",
                                 AiTokenBudget.truncateChars(message.text, MAX_MESSAGE_CHARS),
                             )
+                            message.image
+                                ?.takeIf { it.length <= MAX_MESSAGE_IMAGE_CHARS }
+                                ?.let { put("image", it) }
                         },
                     )
                 }
@@ -93,7 +99,11 @@ object AiChatSessionCodec {
                 val item = element as? JsonObject ?: return@mapNotNull null
                 val role = item.stringOrNull("role") ?: return@mapNotNull null
                 val text = item.stringOrNull("text") ?: return@mapNotNull null
-                PersistedChatMessage(role = role, text = text)
+                PersistedChatMessage(
+                    role = role,
+                    text = text,
+                    image = item.stringOrNull("image"),
+                )
             }.orEmpty()
             val turns = root["turns"].arrayOrNull()?.mapNotNull { element ->
                 val item = element as? JsonObject ?: return@mapNotNull null

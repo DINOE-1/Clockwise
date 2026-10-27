@@ -2,6 +2,7 @@ package com.dinoe.clockwise.ai
 
 import com.dinoe.clockwise.data.Event
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -29,6 +30,49 @@ class AiToolParserTest {
         assertEquals(listOf("personal"), alarms[0].tags.map { it.name })
         assertEquals("2026-10-23", alarms[1].date.toString())
         assertEquals("Train", alarms[1].name)
+    }
+
+    @Test
+    fun parsesDisabledAndOneTimeAlarms() {
+        val alarm = parser.parseAlarms(
+            """{"alarms":[{"time":"07:00","enabled":false,"oneTime":true}]}""",
+        ).single()
+        assertFalse(alarm.enabled)
+        assertTrue(alarm.oneTime)
+    }
+
+    @Test
+    fun parsesEventReminderMinutes() {
+        val event = parser.parseEvents(
+            """
+            {"events":[{
+              "title":"Meeting",
+              "date":"2026-10-25",
+              "start":"10:00",
+              "end":"11:00",
+              "reminderMinutes":10
+            }]}
+            """.trimIndent(),
+        ).single()
+        assertEquals(10, event.reminderMinutes)
+    }
+
+    @Test
+    fun rejectsUnsupportedReminderMinutes() {
+        val error = expectFailure {
+            parser.parseEvents(
+                """
+                {"events":[{
+                  "title":"Meeting",
+                  "date":"2026-10-25",
+                  "start":"10:00",
+                  "end":"11:00",
+                  "reminderMinutes":15
+                }]}
+                """.trimIndent(),
+            )
+        }
+        assertEquals("invalid_reminder", error.code)
     }
 
     @Test

@@ -128,6 +128,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         withAlarm: Boolean,
         tags: List<Tag>,
         repeat: RecurrenceRule = RecurrenceRule(Event.REPEAT_NONE),
+        reminderMinutes: Int = Event.REMINDER_OFF,
     ) {
         launchWrite {
             writer.addEvent(
@@ -139,6 +140,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 withAlarm = withAlarm,
                 tags = tags,
                 repeat = repeat,
+                reminderMinutes = reminderMinutes,
             )
         }
     }
@@ -153,6 +155,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         end: LocalTime,
         withAlarm: Boolean,
         tags: List<Tag>,
+        reminderMinutes: Int = event.reminderMinutes,
     ) {
         launchWrite {
             writer.updateEventScoped(
@@ -165,6 +168,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 end = end,
                 withAlarm = withAlarm,
                 tags = tags,
+                reminderMinutes = reminderMinutes,
             )
         }
     }

@@ -35,6 +35,15 @@ class AiChatSessionCodecTest {
     }
 
     @Test
+    fun roundTripsMessageThumbnail() {
+        val chat = PersistedChat(
+            messages = listOf(PersistedChatMessage("user", "photo", "abc123")),
+        )
+        val decoded = AiChatSessionCodec.decode(AiChatSessionCodec.encode(chat))!!
+        assertEquals("abc123", decoded.messages.single().image)
+    }
+
+    @Test
     fun capsUiMessagesOnEncode() {
         val messages = (1..(AiChatSessionCodec.MAX_UI_MESSAGES + 10)).map {
             PersistedChatMessage("user", "m$it")

@@ -162,6 +162,42 @@ class OpenAiChatClientTest {
     }
 
     @Test
+    fun userMessageWithImageSerializesContentParts() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}""",
+            ),
+        )
+        client.complete(
+            preset = AiProviders.commandCode.copy(baseUrl = baseUrl("/provider/v1")),
+            apiKey = "user_test",
+            model = "vision-model",
+            messages = listOf(
+                ChatMessage(
+                    role = ChatRole.USER,
+                    content = "read this",
+                    images = listOf(ChatImage(base64 = "aGVsbG8=")),
+                ),
+            ),
+            tools = AiTools.definitions,
+        )
+        val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        val parts = body["messages"]!!
+            .jsonArray
+            .first()
+            .jsonObject["content"]!!
+            .jsonArray
+        assertEquals(2, parts.size)
+        assertEquals("text", parts[0].jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals("read this", parts[0].jsonObject["text"]!!.jsonPrimitive.content)
+        assertEquals("image_url", parts[1].jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals(
+            "data:image/jpeg;base64,aGVsbG8=",
+            parts[1].jsonObject["image_url"]!!.jsonObject["url"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
     fun deepSeekOffDisablesThinkingAndOmitsEffort() = runTest {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
@@ -321,6 +357,30 @@ class OpenAiChatClientTest {
         val request = server.takeRequest()
         assertEquals("/provider/v1/models", request.path)
         assertNull(request.getHeader("Authorization"))
+    }
+
+    @Test
+    fun listModelsParsesImageInputModalities() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(
+                    """
+                    {"object":"list","data":[
+                      {"id":"vision-model","name":"Vision","architecture":{"input_modalities":["text","image"]}},
+                      {"id":"text-model","name":"Text","architecture":{"input_modalities":["text"]}},
+                      {"id":"legacy-model","name":"Legacy"}
+                    ]}
+                    """.trimIndent(),
+                ),
+        )
+        val models = client.listModels(
+            preset = AiProviders.commandCode.copy(baseUrl = baseUrl("/provider/v1")),
+            apiKey = null,
+        )
+        assertEquals(true, models.first { it.id == "vision-model" }.supportsImages)
+        assertEquals(false, models.first { it.id == "text-model" }.supportsImages)
+        assertNull(models.first { it.id == "legacy-model" }.supportsImages)
     }
 
     @Test

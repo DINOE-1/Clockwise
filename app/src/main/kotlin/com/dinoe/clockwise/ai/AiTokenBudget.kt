@@ -32,6 +32,9 @@ object AiTokenBudget {
     const val COMPLETED_REASONING_CHARS = 1_200
     const val MAX_TURN_REASONING_CHARS = 4_000
 
+    /** Conservative per-image cost for a downscaled photo, in tokens. */
+    const val IMAGE_INPUT_TOKENS = 1_100
+
     private const val MESSAGE_OVERHEAD_TOKENS = 4
 
     fun estimateTokens(text: String?): Int {
@@ -44,8 +47,14 @@ object AiTokenBudget {
         return cjk + (other + 3) / 4
     }
 
-    fun estimateMessageTokens(content: String?, toolCallTokens: Int = 0): Int =
-        MESSAGE_OVERHEAD_TOKENS + estimateTokens(content) + toolCallTokens
+    fun estimateMessageTokens(
+        content: String?,
+        toolCallTokens: Int = 0,
+        imageCount: Int = 0,
+    ): Int = MESSAGE_OVERHEAD_TOKENS +
+        estimateTokens(content) +
+        toolCallTokens +
+        imageCount * IMAGE_INPUT_TOKENS
 
     /**
      * Input budget for one request. Known model context lengths are reduced by the output reserve
