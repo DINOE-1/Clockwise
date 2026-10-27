@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
@@ -5,9 +7,16 @@ plugins {
     alias(libs.plugins.room)
 }
 
-// Release signing is optional. Values are read from Gradle properties first, then environment
-// variables, so a keystore can be supplied by CI or a local shell without committing secrets.
-// When any value is missing, the release variant is built unsigned.
+// Signing is optional. Values are read from Gradle properties first, then environment variables,
+// then an untracked keystore.properties file at the repository root, so a keystore can be supplied
+// by CI or a local checkout without committing secrets. When any value is missing, the release
+// variant is built unsigned.
+val localSigningValues = rootProject.file("keystore.properties")
+    .takeIf { it.isFile }
+    ?.let { file ->
+        Properties().apply { file.inputStream().use { load(it) } }
+    }
+
 val releaseSigningValues = listOf(
     "KEYSTORE_FILE",
     "KEYSTORE_PASSWORD",
@@ -16,6 +25,7 @@ val releaseSigningValues = listOf(
 ).associateWith { name ->
     providers.gradleProperty(name).orNull
         ?: providers.environmentVariable(name).orNull
+        ?: localSigningValues?.getProperty(name)
 }
 
 val hasReleaseSigning = releaseSigningValues.values.all { !it.isNullOrBlank() }
@@ -44,6 +54,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Sign debug builds with the same key as release builds when one is configured, so an
+            // APK built locally can update a beta APK installed from CI instead of conflicting.
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

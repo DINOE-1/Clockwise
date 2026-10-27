@@ -120,10 +120,27 @@ export KEY_PASSWORD='...'
 
 `KEYSTORE_FILE` 可以是絕對路徑，也可以是相對於儲存庫根目錄的路徑。也可以改用同名 Gradle 屬性
 提供，例如寫在 `~/.gradle/gradle.properties`，或使用 `-PKEYSTORE_FILE=...`；屬性未提供時會讀取
-環境變數。請勿提交金鑰庫或其密碼（`.gitignore` 已排除 `*.jks`、`*.keystore` 與 `*.p12`）。
+環境變數，最後才讀取儲存庫根目錄的 `keystore.properties`（已列入 git 忽略），讓本機開發不必
+每次建置都匯出變數。請勿提交金鑰庫或其密碼（`.gitignore` 已排除 `*.jks`、`*.keystore`、
+`*.p12` 與 `keystore.properties`）。
 
 有設定簽章時，APK 會輸出到 `app/build/outputs/apk/release/app-release.apk`；否則為
-`app/build/outputs/apk/release/app-release-unsigned.apk`。目前版本為 1.1.0（version code 2）。
+`app/build/outputs/apk/release/app-release-unsigned.apk`。設定簽章後，偵錯版也會使用同一把金鑰，
+因此本機建置的 APK 可直接更新已安裝的 beta。
+
+### Beta 版
+
+GitHub Actions 會把可安裝的 APK 發佈成 `clockwise-beta` 產物。它是簽章過的發布版，而且每次執行
+都使用同一把金鑰，所以新版 beta 可以直接覆蓋舊版安裝。workflow 會讀取儲存庫秘密
+`KEYSTORE_BASE64`、`KEYSTORE_PASSWORD`、`KEY_ALIAS` 與 `KEY_PASSWORD`：
+
+```bash
+base64 -w0 release.jks   # 將輸出貼到 KEYSTORE_BASE64 秘密
+```
+
+沒有這些秘密時，工作仍會建置、測試與 lint，但不會上傳可安裝的 APK。偵錯 APK 不會發佈，因為每次
+runner 都會用不同的臨時金鑰簽章，這正是更新時出現套件衝突的原因。在此簽章方式之前的 beta 就是
+用這種臨時金鑰簽的，因此第一次安裝固定金鑰簽章的版本前，需要先解除安裝一次。
 
 ## 執行
 

@@ -126,12 +126,30 @@ export KEY_PASSWORD='...'
 
 `KEYSTORE_FILE` may be absolute or relative to the repository root. The same names can be supplied
 as Gradle properties instead, for example in `~/.gradle/gradle.properties` or with
-`-PKEYSTORE_FILE=...`; the environment is used when a property is absent. Never commit a keystore or
-its passwords (`.gitignore` excludes `*.jks`, `*.keystore`, and `*.p12`).
+`-PKEYSTORE_FILE=...`; the environment is used when a property is absent. A git-ignored
+`keystore.properties` file at the repository root is the last fallback, which keeps a local checkout
+signed without exporting variables for every build. Never commit a keystore or its passwords
+(`.gitignore` excludes `*.jks`, `*.keystore`, `*.p12`, and `keystore.properties`).
 
 When signing is configured the APK is written to
 `app/build/outputs/apk/release/app-release.apk`; otherwise it is
-`app/build/outputs/apk/release/app-release-unsigned.apk`. This is version 1.1.0 (version code 2).
+`app/build/outputs/apk/release/app-release-unsigned.apk`. Debug builds are signed with the same key
+when one is configured, so an APK built locally can update an installed beta.
+
+### Beta builds
+
+GitHub Actions publishes the installable APK as the `clockwise-beta` artifact. It is a signed release
+build, and every run uses the same key, so a newer beta installs over an older one. The workflow
+reads the `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, and `KEY_PASSWORD` repository secrets:
+
+```bash
+base64 -w0 release.jks   # paste the output into the KEYSTORE_BASE64 secret
+```
+
+Without those secrets the job still builds, tests, and lints, but uploads no installable APK. Debug
+APKs are not published because each runner signs them with its own throwaway key, which is what makes
+an update fail with a package conflict. Beta APKs published before this signing setup used such keys,
+so uninstall the app once before installing the first consistently signed build.
 
 ## Run
 

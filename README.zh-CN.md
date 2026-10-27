@@ -120,10 +120,27 @@ export KEY_PASSWORD='...'
 
 `KEYSTORE_FILE` 可以是绝对路径，也可以是相对于仓库根目录的路径。也可以改用同名 Gradle 属性
 提供，例如写在 `~/.gradle/gradle.properties`，或使用 `-PKEYSTORE_FILE=...`；属性未提供时会读取
-环境变量。请勿提交密钥库或其密码（`.gitignore` 已排除 `*.jks`、`*.keystore` 和 `*.p12`）。
+环境变量，最后才读取仓库根目录的 `keystore.properties`（已列入 git 忽略），让本地开发不必每次
+构建都导出变量。请勿提交密钥库或其密码（`.gitignore` 已排除 `*.jks`、`*.keystore`、`*.p12`
+和 `keystore.properties`）。
 
 配置签名时，APK 会输出到 `app/build/outputs/apk/release/app-release.apk`；否则为
-`app/build/outputs/apk/release/app-release-unsigned.apk`。当前版本为 1.1.0（version code 2）。
+`app/build/outputs/apk/release/app-release-unsigned.apk`。配置签名后，调试版也会使用同一把密钥，
+因此本地构建的 APK 可以直接更新已安装的 beta。
+
+### Beta 版
+
+GitHub Actions 会把可安装的 APK 发布成 `clockwise-beta` 产物。它是已签名的发布版，而且每次运行
+都使用同一把密钥，所以新版 beta 可以直接覆盖旧版安装。workflow 会读取仓库秘密
+`KEYSTORE_BASE64`、`KEYSTORE_PASSWORD`、`KEY_ALIAS` 和 `KEY_PASSWORD`：
+
+```bash
+base64 -w0 release.jks   # 将输出粘贴到 KEYSTORE_BASE64 秘密
+```
+
+没有这些秘密时，任务仍会构建、测试和 lint，但不会上传可安装的 APK。调试 APK 不会发布，因为每个
+runner 都会用不同的临时密钥签名，这正是更新时出现包冲突的原因。此签名方式之前的 beta 就是用这种
+临时密钥签名的，因此首次安装固定密钥签名的版本前，需要先卸载一次。
 
 ## 运行
 
