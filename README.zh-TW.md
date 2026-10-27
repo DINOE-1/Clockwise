@@ -11,15 +11,20 @@ AI 會在你確認預覽後讀取並修改行程。
 
 ## 畫面預覽
 
-以下是主要畫面的快速預覽：
+以下是主要畫面的快速預覽。介面提供英文與繁體中文，兩種語言的截圖分別放在
+[`images/en`](images/en) 與 [`images/zh-TW`](images/zh-TW)。
 
 | 月檢視 | 日檢視 | 建立活動 |
 | :---: | :---: | :---: |
-| <img src="images/Calendar_Month.png" width="230" alt="行事曆月檢視"> | <img src="images/Calendar_Day.png" width="230" alt="行事曆日時間軸"> | <img src="images/Create_Event.png" width="230" alt="在時間軸上建立活動"> |
+| <img src="images/zh-TW/Calendar_Month.png" width="230" alt="行事曆月檢視"> | <img src="images/zh-TW/Calendar_Day.png" width="230" alt="行事曆日時間軸"> | <img src="images/zh-TW/Create_Event.png" width="230" alt="建立活動表單"> |
 
-| 鬧鐘 | AI 助理 |
-| :---: | :---: |
-| <img src="images/Alarms.png" width="230" alt="鬧鐘清單"> | <img src="images/AI.png" width="230" alt="AI 助理套用變更預覽"> |
+| 鬧鐘 | AI 助理 | 標籤 |
+| :---: | :---: | :---: |
+| <img src="images/zh-TW/Alarms.png" width="230" alt="鬧鐘清單"> | <img src="images/zh-TW/AI.png" width="230" alt="AI 助理規劃每週運動"> | <img src="images/zh-TW/Tags.png" width="230" alt="彩色標籤"> |
+
+| 設定 |
+| :---: |
+| <img src="images/zh-TW/Settings.png" width="230" alt="設定與外觀選項"> |
 
 ## 功能
 

@@ -11,15 +11,20 @@ Clockwise 是一款本地优先的 Android 日历与闹钟应用，使用 Jetpac
 
 ## 界面预览
 
-以下是主要界面的快速预览：
+以下是主要界面的快速预览。应用界面提供英文与繁体中文，两种语言的截图分别放在
+[`images/en`](images/en) 与 [`images/zh-TW`](images/zh-TW)；下表使用繁体中文界面。
 
 | 月视图 | 日视图 | 创建活动 |
 | :---: | :---: | :---: |
-| <img src="images/Calendar_Month.png" width="230" alt="日历月视图"> | <img src="images/Calendar_Day.png" width="230" alt="日历日时间轴"> | <img src="images/Create_Event.png" width="230" alt="在时间轴上创建活动"> |
+| <img src="images/zh-TW/Calendar_Month.png" width="230" alt="日历月视图"> | <img src="images/zh-TW/Calendar_Day.png" width="230" alt="日历日时间轴"> | <img src="images/zh-TW/Create_Event.png" width="230" alt="创建活动表单"> |
 
-| 闹钟 | AI 助手 |
-| :---: | :---: |
-| <img src="images/Alarms.png" width="230" alt="闹钟列表"> | <img src="images/AI.png" width="230" alt="AI 助手应用变更预览"> |
+| 闹钟 | AI 助手 | 标签 |
+| :---: | :---: | :---: |
+| <img src="images/zh-TW/Alarms.png" width="230" alt="闹钟列表"> | <img src="images/zh-TW/AI.png" width="230" alt="AI 助手规划每周运动"> | <img src="images/zh-TW/Tags.png" width="230" alt="彩色标签"> |
+
+| 设置 |
+| :---: |
+| <img src="images/zh-TW/Settings.png" width="230" alt="设置与外观选项"> |
 
 ## 功能
 

@@ -12,15 +12,21 @@ are in English.
 
 ## Screenshots
 
-A quick look at the main screens:
+A quick look at the main screens. The app is available in English and Traditional Chinese;
+screenshots for both languages are kept in [`images/en`](images/en) and
+[`images/zh-TW`](images/zh-TW).
 
 | Month view | Day view | Create event |
 | :---: | :---: | :---: |
-| <img src="images/Calendar_Month.png" width="230" alt="Calendar month view"> | <img src="images/Calendar_Day.png" width="230" alt="Calendar day timeline"> | <img src="images/Create_Event.png" width="230" alt="Creating an event on the timeline"> |
+| <img src="images/en/Calendar_Month.png" width="230" alt="Calendar month view"> | <img src="images/en/Calendar_Day.png" width="230" alt="Calendar day timeline"> | <img src="images/en/Create_Event.png" width="230" alt="Creating an event"> |
 
-| Alarms | AI assistant |
-| :---: | :---: |
-| <img src="images/Alarms.png" width="230" alt="Alarm list"> | <img src="images/AI.png" width="230" alt="AI assistant applying a change preview"> |
+| Alarms | AI assistant | Tags |
+| :---: | :---: | :---: |
+| <img src="images/en/Alarms.png" width="230" alt="Alarm list"> | <img src="images/en/AI.png" width="230" alt="AI assistant planning a workout week"> | <img src="images/en/Tags.png" width="230" alt="Colored tags"> |
+
+| Settings |
+| :---: |
+| <img src="images/en/Settings.png" width="230" alt="Settings and appearance options"> |
 
 ## Features
 
