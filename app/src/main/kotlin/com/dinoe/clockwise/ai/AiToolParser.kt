@@ -57,6 +57,8 @@ data class EventDraft(
     val occurrenceCount: Int,
     val reminderMinutes: Int,
     val tags: List<TagRef>,
+    val endDayOffset: Int = 0,
+    val allDay: Boolean = false,
 ) {
     fun recurrenceRule(): RecurrenceRule = RecurrenceRule(
         type = repeatType,
@@ -108,6 +110,10 @@ data class EventUpdateDraft(
     val previousWithAlarm: Boolean,
     val previousReminderMinutes: Int,
     val isSeries: Boolean,
+    val endDayOffset: Int = 0,
+    val allDay: Boolean = false,
+    val previousEndDayOffset: Int = 0,
+    val previousAllDay: Boolean = false,
 )
 
 data class EventDeleteDraft(
@@ -352,24 +358,58 @@ class AiToolParser(
         } else {
             event.note
         }
-        val start = if (item.containsKey("start")) {
+        val allDay = item.booleanOrNull("allDay") ?: event.allDay
+        val start = if (allDay) {
+            LocalTime.MIDNIGHT
+        } else if (item.containsKey("start")) {
             parseTime(item, "start", "events[$index].start")
         } else {
             LocalTime.ofSecondOfDay(event.start.toLong())
         }
-        val end = if (item.containsKey("end")) {
+        val end = if (allDay) {
+            LocalTime.MIDNIGHT
+        } else if (item.containsKey("end")) {
             parseTime(item, "end", "events[$index].end")
         } else {
-            LocalTime.ofSecondOfDay(event.end.toLong())
+            LocalTime.ofSecondOfDay(event.endTimeOfDay.toLong())
         }
-        if (end.isBefore(start)) {
-            throw error("invalid_time_range", "events[$index].end must not be before start")
+        val endDateRaw = item.stringOrNull("endDate")?.trim()?.takeIf { it.isNotEmpty() }
+        val endDayOffset = when {
+            allDay -> 0
+            endDateRaw != null -> {
+                val endDate = parseDate(endDateRaw, "events[$index].endDate")
+                if (endDate.isBefore(date)) {
+                    throw error(
+                        "invalid_end_date",
+                        "events[$index].endDate must not be before date",
+                    )
+                }
+                (endDate.toEpochDay() - date.toEpochDay()).toInt()
+            }
+
+            else -> event.endDayOffset
+        }
+        if (endDayOffset > Event.MAX_EVENT_DAY_SPAN) {
+            throw error(
+                "invalid_end_date",
+                "events[$index].endDate spans more than ${Event.MAX_EVENT_DAY_SPAN} days",
+            )
+        }
+        if (!allDay && endDayOffset == 0 && end.isBefore(start)) {
+            throw error(
+                "invalid_time_range",
+                "events[$index].end must not be before start unless endDate is a later day",
+            )
         }
         val targets = eventTargets(event, scope)
         val targetIds = targets.map { it.id }.toSet()
-        val withAlarm = item.booleanOrNull("withAlarm")
-            ?: alarmsById.values.any { it.eventId == event.id }
-        val reminderMinutes = parseReminderMinutes(item, "events[$index].reminderMinutes")
+        val withAlarm = (item.booleanOrNull("withAlarm")
+            ?: alarmsById.values.any { it.eventId == event.id }) && !allDay
+        val reminderMinutes = if (allDay) {
+            Event.REMINDER_OFF
+        } else {
+            parseReminderMinutes(item, "events[$index].reminderMinutes")
+        }
         val tags = if (item.containsKey("tags")) {
             parseTags(item["tags"], "events[$index].tags")
         } else {
@@ -390,10 +430,14 @@ class AiToolParser(
             previousTitle = event.title,
             previousDate = previousDate,
             previousStart = LocalTime.ofSecondOfDay(event.start.toLong()),
-            previousEnd = LocalTime.ofSecondOfDay(event.end.toLong()),
+            previousEnd = LocalTime.ofSecondOfDay(event.endTimeOfDay.toLong()),
             previousWithAlarm = alarmsById.values.any { it.eventId in targetIds },
             previousReminderMinutes = event.reminderMinutes,
             isSeries = isSeries,
+            endDayOffset = endDayOffset,
+            allDay = allDay,
+            previousEndDayOffset = event.endDayOffset,
+            previousAllDay = event.allDay,
         )
     }
 
@@ -552,19 +596,54 @@ class AiToolParser(
         val date = item.stringOrNull("date")?.trim()
             ?.let { parseDate(it, "events[$index].date") }
             ?: throw error("invalid_date", "events[$index].date is required (YYYY-MM-DD)")
-        val start = parseTime(item, "start", "events[$index].start")
-        val end = if (item.containsKey("end")) {
-            parseTime(item, "end", "events[$index].end")
+        val allDay = item.booleanOrNull("allDay") ?: false
+        val start: LocalTime
+        val end: LocalTime
+        val endDayOffset: Int
+        if (allDay) {
+            start = LocalTime.MIDNIGHT
+            end = LocalTime.MIDNIGHT
+            endDayOffset = 0
         } else {
-            // Omitting end creates an event with only a start time.
-            start
+            start = parseTime(item, "start", "events[$index].start")
+            end = if (item.containsKey("end")) {
+                parseTime(item, "end", "events[$index].end")
+            } else {
+                // Omitting end creates an event with only a start time.
+                start
+            }
+            val endDateRaw = item.stringOrNull("endDate")?.trim()?.takeIf { it.isNotEmpty() }
+            endDayOffset = if (endDateRaw != null) {
+                val endDate = parseDate(endDateRaw, "events[$index].endDate")
+                if (endDate.isBefore(date)) {
+                    throw error(
+                        "invalid_end_date",
+                        "events[$index].endDate must not be before date",
+                    )
+                }
+                (endDate.toEpochDay() - date.toEpochDay()).toInt()
+            } else {
+                0
+            }
+            if (endDayOffset > Event.MAX_EVENT_DAY_SPAN) {
+                throw error(
+                    "invalid_end_date",
+                    "events[$index].endDate spans more than ${Event.MAX_EVENT_DAY_SPAN} days",
+                )
+            }
+            if (endDayOffset == 0 && end.isBefore(start)) {
+                throw error(
+                    "invalid_time_range",
+                    "events[$index].end must not be before start unless endDate is a later day",
+                )
+            }
         }
-        if (end.isBefore(start)) {
-            throw error("invalid_time_range", "events[$index].end must not be before start")
+        val withAlarm = (item.booleanOrNull("withAlarm") ?: false) && !allDay
+        val reminderMinutes = if (allDay) {
+            Event.REMINDER_OFF
+        } else {
+            parseReminderMinutes(item, "events[$index].reminderMinutes") ?: Event.REMINDER_OFF
         }
-        val withAlarm = item.booleanOrNull("withAlarm") ?: false
-        val reminderMinutes = parseReminderMinutes(item, "events[$index].reminderMinutes")
-            ?: Event.REMINDER_OFF
         val repeat = item["repeat"]
         val repeatType: Int
         val repeatDays: Set<Int>
@@ -686,6 +765,8 @@ class AiToolParser(
             occurrenceCount = occurrences,
             reminderMinutes = reminderMinutes,
             tags = tags,
+            endDayOffset = endDayOffset,
+            allDay = allDay,
         )
     }
 

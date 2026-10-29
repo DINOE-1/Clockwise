@@ -30,8 +30,13 @@
     <string name="end_time_label">End time</string>
     <string name="event_has_end_time">Set an end time</string>
     <string name="event_no_end_time_helper">Turn off to keep only a start time, for quick actions such as taking medicine or drinking water.</string>
+    <string name="event_all_day">All day</string>
+    <string name="event_all_day_helper">All-day events have no time and cannot create alarms or reminders.</string>
+    <string name="event_end_date_label">End date</string>
+    <string name="event_time_range_next_day">%1$s – next day %2$s</string>
+    <string name="event_time_range_days_later">%1$s – %2$d days later %3$s</string>
     <string name="select_time">Select time</string>
-    <string name="invalid_time_range">End time must be after start time.</string>
+    <string name="invalid_time_range">End time must be after start time, or set the end date to the next day.</string>
     <string name="empty_day">No events on this day</string>
     <string name="day_cell_selected">Selected</string>
     <string name="day_cell_outside_month">Outside this month</string>

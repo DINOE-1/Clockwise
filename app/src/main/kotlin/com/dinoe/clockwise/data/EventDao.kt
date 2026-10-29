@@ -18,7 +18,11 @@ interface EventDao {
     @Query("SELECT * FROM events WHERE id = :id")
     suspend fun getById(id: Long): Event?
 
-    @Query("SELECT * FROM events WHERE date BETWEEN :from AND :to ORDER BY date, start")
+    // Includes multi-day events that started before :from but still overlap the range.
+    @Query(
+        "SELECT * FROM events WHERE date <= :to AND date + (end / 86400) >= :from " +
+            "ORDER BY date, start",
+    )
     suspend fun getBetween(from: Long, to: Long): List<Event>
 
     @Query("SELECT * FROM events WHERE seriesId = :seriesId ORDER BY occurrenceIndex")

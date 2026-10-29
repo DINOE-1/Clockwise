@@ -68,6 +68,7 @@ class BackupRepository(context: Context) {
                             put("repeatType", event.repeatType)
                             put("repeatDays", event.repeatDays)
                             put("reminderMinutes", event.reminderMinutes)
+                            put("allDay", event.allDay)
                         },
                     )
                 }
@@ -185,6 +186,7 @@ class BackupRepository(context: Context) {
                         repeatType = row.repeatType,
                         repeatDays = row.repeatDays,
                         reminderMinutes = row.reminderMinutes,
+                        allDay = row.allDay,
                     ),
                 )
                 eventIdMap[row.id] = newId
@@ -208,6 +210,7 @@ class BackupRepository(context: Context) {
                         repeatType = row.repeatType,
                         repeatDays = row.repeatDays,
                         reminderMinutes = row.reminderMinutes,
+                        allDay = row.allDay,
                     ),
                 )
             }
@@ -287,7 +290,15 @@ class BackupRepository(context: Context) {
         }
         val start = obj.requireInt("start", "event $id")
         val end = obj.requireInt("end", "event $id")
-        if (start !in 0..86_399 || end !in 0..86_399 || start > end) {
+        val allDay = obj.optionalBoolean("allDay") ?: false
+        if (start !in 0..86_399 || end !in 0..MAX_EVENT_SECONDS) {
+            throw BackupException("Event $id has an invalid time range")
+        }
+        if (allDay) {
+            if (start != 0 || end != 0) {
+                throw BackupException("Event $id has an invalid all-day time range")
+            }
+        } else if (start > end) {
             throw BackupException("Event $id has an invalid time range")
         }
         val repeatType = obj.optionalInt("repeatType") ?: Event.REPEAT_NONE
@@ -312,6 +323,7 @@ class BackupRepository(context: Context) {
             repeatType = repeatType,
             repeatDays = obj.optionalString("repeatDays").orEmpty(),
             reminderMinutes = reminderMinutes,
+            allDay = allDay,
         )
     }
 
@@ -404,6 +416,7 @@ class BackupRepository(context: Context) {
         val repeatType: Int,
         val repeatDays: String,
         val reminderMinutes: Int,
+        val allDay: Boolean,
     )
 
     private data class BackupAlarm(
@@ -427,6 +440,7 @@ class BackupRepository(context: Context) {
     private companion object {
         const val SCHEMA_VERSION = 1L
         const val MAX_BACKUP_EVENTS = 10_000
+        const val MAX_EVENT_SECONDS = Event.MAX_EVENT_DAY_SPAN * Event.SECONDS_PER_DAY
         val MIN_EPOCH_DAY: Long = LocalDate.of(1900, 1, 1).toEpochDay()
         val MAX_EPOCH_DAY: Long = LocalDate.of(2200, 12, 31).toEpochDay()
     }

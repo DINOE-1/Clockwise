@@ -937,11 +937,12 @@ private fun AlarmStackDraftRow(stack: AlarmStackDraft, onEdit: (() -> Unit)? = n
 private fun EventDraftRow(event: EventDraft, onEdit: (() -> Unit)? = null) {
     val locale = rememberLocale()
     val dateText = formatDate(event.date)
-    val timeRange = if (event.end.isAfter(event.start)) {
-        "${formatTime(event.start)}–${formatTime(event.end)}"
-    } else {
-        formatTime(event.start)
-    }
+    val timeRange = formatEventTimeRange(
+        allDay = event.allDay,
+        start = event.start,
+        end = event.end,
+        endDayOffset = event.endDayOffset,
+    )
     val weekdayText = event.repeatDays.sorted().joinToString(", ") {
         weekdayLabel(it, locale)
     }
@@ -1157,18 +1158,18 @@ private fun AlarmDeleteRow(delete: AlarmDeleteDraft) {
 
 @Composable
 private fun EventUpdateRow(update: EventUpdateDraft) {
-    val before = "${formatDate(update.previousDate)} " + if (
-        update.previousEnd.isAfter(update.previousStart)
-    ) {
-        "${formatTime(update.previousStart)}–${formatTime(update.previousEnd)}"
-    } else {
-        formatTime(update.previousStart)
-    }
-    val after = "${formatDate(update.date)} " + if (update.end.isAfter(update.start)) {
-        "${formatTime(update.start)}–${formatTime(update.end)}"
-    } else {
-        formatTime(update.start)
-    }
+    val before = "${formatDate(update.previousDate)} " + formatEventTimeRange(
+        allDay = update.previousAllDay,
+        start = update.previousStart,
+        end = update.previousEnd,
+        endDayOffset = update.previousEndDayOffset,
+    )
+    val after = "${formatDate(update.date)} " + formatEventTimeRange(
+        allDay = update.allDay,
+        start = update.start,
+        end = update.end,
+        endDayOffset = update.endDayOffset,
+    )
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1194,7 +1195,9 @@ private fun EventUpdateRow(update: EventUpdateDraft) {
             )
             val timeChanged = update.previousDate != update.date ||
                 update.previousStart != update.start ||
-                update.previousEnd != update.end
+                update.previousEnd != update.end ||
+                update.previousEndDayOffset != update.endDayOffset ||
+                update.previousAllDay != update.allDay
             Text(
                 text = if (timeChanged) {
                     stringResource(R.string.ai_proposal_alarm_change, before, after)
@@ -1814,6 +1817,29 @@ private fun UsageDialog(
 
 @Composable
 private fun formatTime(time: LocalTime): String = rememberClockFormatter().format(time)
+
+@Composable
+private fun formatEventTimeRange(
+    allDay: Boolean,
+    start: LocalTime,
+    end: LocalTime,
+    endDayOffset: Int,
+): String {
+    if (allDay) return stringResource(R.string.event_all_day)
+    if (!end.isAfter(start) && endDayOffset == 0) return formatTime(start)
+    val startText = formatTime(start)
+    val endText = formatTime(end)
+    return when (endDayOffset) {
+        0 -> "$startText–$endText"
+        1 -> stringResource(R.string.event_time_range_next_day, startText, endText)
+        else -> stringResource(
+            R.string.event_time_range_days_later,
+            startText,
+            endDayOffset,
+            endText,
+        )
+    }
+}
 
 @Composable
 private fun formatDate(date: LocalDate): String =

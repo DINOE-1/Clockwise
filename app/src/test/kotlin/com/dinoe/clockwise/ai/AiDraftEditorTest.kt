@@ -70,6 +70,37 @@ class AiDraftEditorTest {
     }
 
     @Test
+    fun overnightEventIsValidWhenEndDayIsLater() {
+        assertNull(
+            AiDraftEditor.eventIssue(
+                event(start = LocalTime.of(23, 0), end = LocalTime.of(7, 0))
+                    .copy(endDayOffset = 1),
+                now,
+            ),
+        )
+    }
+
+    @Test
+    fun allDayEventIgnoresTimesAndAlarms() {
+        assertNull(
+            AiDraftEditor.eventIssue(
+                event(start = LocalTime.of(23, 0), end = LocalTime.of(7, 0), withAlarm = true)
+                    .copy(allDay = true),
+                now,
+            ),
+        )
+        val normalized = AiDraftEditor.normalizeEvent(
+            event(start = LocalTime.of(23, 0), end = LocalTime.of(7, 0), withAlarm = true)
+                .copy(allDay = true, endDayOffset = 1),
+        )
+        assertEquals(LocalTime.MIDNIGHT, normalized.start)
+        assertEquals(LocalTime.MIDNIGHT, normalized.end)
+        assertEquals(0, normalized.endDayOffset)
+        assertEquals(false, normalized.withAlarm)
+        assertEquals(Event.REMINDER_OFF, normalized.reminderMinutes)
+    }
+
+    @Test
     fun alarmInPastIsRejected() {
         assertEquals(
             AiDraftIssue.ALARM_IN_PAST,

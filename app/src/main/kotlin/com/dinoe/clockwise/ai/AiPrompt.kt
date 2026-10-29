@@ -35,6 +35,11 @@ object AiPrompt {
           (90 for a class or exam).
         - Event date: if only a weekday/time is given, use the next matching date; if only a time is
           given, use today when it is still ahead, otherwise tomorrow.
+        - All-day: 全天/整天 means allDay=true with no start or end time; all-day events never create
+          alarms or reminders.
+        - Overnight or multi-day: when the event ends on a later day (跨日, 到隔天), pass endDate
+          with the end day, for example start 23:00 on 2026-10-25, end 07:00, endDate 2026-10-26.
+          Without endDate, end must not be before start.
         - Alarm without a date rings at the next occurrence of its time; add a date only when a day
           is named.
         - withAlarm=false and reminderMinutes=0 unless the user asks for an alarm or reminder. For a

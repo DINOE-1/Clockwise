@@ -158,9 +158,24 @@ class ScheduleWriter(context: Context) {
         tags: List<Tag>,
         repeat: RecurrenceRule = RecurrenceRule(Event.REPEAT_NONE),
         reminderMinutes: Int = Event.REMINDER_OFF,
+        endDayOffset: Int = 0,
+        allDay: Boolean = false,
     ): EventCreation {
-        require(start <= end) { "Event end must not be before its start" }
-        require(isValidReminder(reminderMinutes)) { "Invalid reminder: $reminderMinutes" }
+        require(endDayOffset in 0..Event.MAX_EVENT_DAY_SPAN) {
+            "Event end day offset is out of range"
+        }
+        require(allDay || endDayOffset > 0 || start <= end) {
+            "Event end must not be before its start"
+        }
+        val alarmRequested = withAlarm && !allDay
+        val effectiveReminder = if (allDay) Event.REMINDER_OFF else reminderMinutes
+        require(isValidReminder(effectiveReminder)) { "Invalid reminder: $reminderMinutes" }
+        val startSeconds = if (allDay) 0 else start.toSecondOfDay()
+        val endSeconds = if (allDay) {
+            0
+        } else {
+            end.toSecondOfDay() + endDayOffset * Event.SECONDS_PER_DAY
+        }
         val selectedTags = tags.take(MAX_TAGS_PER_ITEM)
         val repeatPlan = planRecurrence(date, repeat)
         if (repeatPlan.limitReached) {
@@ -179,16 +194,17 @@ class ScheduleWriter(context: Context) {
             title = title,
             note = note,
             date = date.toEpochDay(),
-            start = start.toSecondOfDay(),
-            end = end.toSecondOfDay(),
+            start = startSeconds,
+            end = endSeconds,
             repeatType = repeat.type,
             repeatDays = repeatDays,
-            reminderMinutes = reminderMinutes,
+            reminderMinutes = effectiveReminder,
+            allDay = allDay,
         )
         val occurrenceCount = 1 + repeatPlan.dates.size
 
         val persisted = database.withTransaction {
-            if (withAlarm) ensureAlarmCapacity(occurrenceCount)
+            if (alarmRequested) ensureAlarmCapacity(occurrenceCount)
             val occurrences = if (repeat.type == Event.REPEAT_NONE) {
                 val eventId = eventDao.insert(baseEvent)
                 listOf(baseEvent.copy(id = eventId))
@@ -217,7 +233,7 @@ class ScheduleWriter(context: Context) {
                 }
             }
 
-            val alarms = if (withAlarm) {
+            val alarms = if (alarmRequested) {
                 val drafts = occurrences.map { occurrence ->
                     Alarm(
                         time = occurrence.start,
@@ -311,8 +327,15 @@ class ScheduleWriter(context: Context) {
         withAlarm: Boolean,
         tags: List<Tag>,
         reminderMinutes: Int? = null,
+        endDayOffset: Int = event.endDayOffset,
+        allDay: Boolean = event.allDay,
     ): EventMutation {
-        require(start <= end) { "Event end must not be before its start" }
+        require(endDayOffset in 0..Event.MAX_EVENT_DAY_SPAN) {
+            "Event end day offset is out of range"
+        }
+        require(allDay || endDayOffset > 0 || start <= end) {
+            "Event end must not be before its start"
+        }
         if (reminderMinutes != null) {
             require(isValidReminder(reminderMinutes)) { "Invalid reminder: $reminderMinutes" }
         }
@@ -328,6 +351,8 @@ class ScheduleWriter(context: Context) {
                     withAlarm = withAlarm,
                     tags = tags,
                     reminderMinutes = reminderMinutes,
+                    endDayOffset = endDayOffset,
+                    allDay = allDay,
                     effects = effects,
                 )
             }
@@ -354,6 +379,8 @@ class ScheduleWriter(context: Context) {
                     withAlarm = withAlarm,
                     tags = tags,
                     reminderMinutes = reminderMinutes,
+                    endDayOffset = endDayOffset,
+                    allDay = allDay,
                     effects = effects,
                 )
             }
@@ -445,17 +472,29 @@ class ScheduleWriter(context: Context) {
         withAlarm: Boolean,
         tags: List<Tag>,
         reminderMinutes: Int?,
+        endDayOffset: Int,
+        allDay: Boolean,
         effects: MutableList<SchedulerEffect>,
     ): EventMutation {
         val selectedTags = tags.take(MAX_TAGS_PER_ITEM)
-        val updatedReminder = reminderMinutes ?: event.reminderMinutes
+        val updatedReminder = if (allDay) {
+            Event.REMINDER_OFF
+        } else {
+            reminderMinutes ?: event.reminderMinutes
+        }
+        val alarmRequested = withAlarm && !allDay
         val updated = event.copy(
             title = title,
             note = note,
             date = date.toEpochDay(),
-            start = start.toSecondOfDay(),
-            end = end.toSecondOfDay(),
+            start = if (allDay) 0 else start.toSecondOfDay(),
+            end = if (allDay) {
+                0
+            } else {
+                end.toSecondOfDay() + endDayOffset * Event.SECONDS_PER_DAY
+            },
             reminderMinutes = updatedReminder,
+            allDay = allDay,
         )
         eventDao.update(updated)
         effects += SchedulerEffect.CancelReminder(event)
@@ -471,7 +510,7 @@ class ScheduleWriter(context: Context) {
         var mutation = EventMutation(affectedEvents = 1)
         val linkedAlarm = alarmDao.getByEventId(event.id)
         when {
-            withAlarm && linkedAlarm == null -> {
+            alarmRequested && linkedAlarm == null -> {
                 ensureAlarmCapacity(1)
                 val alarmId = alarmDao.insert(
                     Alarm(
@@ -499,7 +538,7 @@ class ScheduleWriter(context: Context) {
                 mutation = mutation.copy(alarmsChanged = 1)
             }
 
-            withAlarm && linkedAlarm != null -> {
+            alarmRequested && linkedAlarm != null -> {
                 if (!linkedAlarm.enabled) ensureAlarmCapacity(1)
                 val synced = linkedAlarm.copy(
                     time = updated.start,
@@ -520,7 +559,7 @@ class ScheduleWriter(context: Context) {
                 mutation = mutation.copy(alarmsChanged = 1)
             }
 
-            !withAlarm && linkedAlarm != null -> {
+            !alarmRequested && linkedAlarm != null -> {
                 effects += SchedulerEffect.Cancel(linkedAlarm)
                 tagDao.clearAlarmTags(linkedAlarm.id)
                 alarmDao.delete(linkedAlarm)

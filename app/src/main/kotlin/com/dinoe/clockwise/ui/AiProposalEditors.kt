@@ -336,7 +336,13 @@ internal fun EventDraftEditDialog(
     var dateEpochDay by rememberSaveable { mutableLongStateOf(draft.date.toEpochDay()) }
     var startSeconds by rememberSaveable { mutableIntStateOf(draft.start.toSecondOfDay()) }
     var endSeconds by rememberSaveable { mutableIntStateOf(draft.end.toSecondOfDay()) }
-    var hasEndTime by rememberSaveable { mutableStateOf(draft.end.isAfter(draft.start)) }
+    var endDateEpochDay by rememberSaveable {
+        mutableLongStateOf(draft.date.plusDays(draft.endDayOffset.toLong()).toEpochDay())
+    }
+    var hasEndTime by rememberSaveable {
+        mutableStateOf(draft.end.isAfter(draft.start) || draft.endDayOffset > 0)
+    }
+    var allDay by rememberSaveable { mutableStateOf(draft.allDay) }
     var withAlarm by rememberSaveable { mutableStateOf(draft.withAlarm) }
     var reminderMinutes by rememberSaveable { mutableIntStateOf(draft.reminderMinutes) }
     var selectedTagIds by rememberSaveable { mutableStateOf(draft.tags.map { it.id }.toLongArray()) }
@@ -351,9 +357,12 @@ internal fun EventDraftEditDialog(
     }
     var timeField by remember { mutableStateOf<EventDraftTimeField?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showEndDatePicker by remember { mutableStateOf(false) }
     var showRepeatDatePicker by remember { mutableStateOf(false) }
 
     val date = LocalDate.ofEpochDay(dateEpochDay)
+    val endDate = LocalDate.ofEpochDay(endDateEpochDay)
+    val endDayOffset = (endDateEpochDay - dateEpochDay).toInt().coerceAtLeast(0)
     val until = LocalDate.ofEpochDay(repeatUntilEpochDay)
     val selectedTags = allTags.filter { it.id in selectedTagIds }
     val repeatDays = repeatDayIds.map { it.toInt() }.toSet()
@@ -370,7 +379,9 @@ internal fun EventDraftEditDialog(
         date = date,
         start = startTime,
         end = if (hasEndTime) LocalTime.ofSecondOfDay(endSeconds.toLong()) else startTime,
-        withAlarm = withAlarm,
+        endDayOffset = if (allDay || !hasEndTime) 0 else endDayOffset,
+        allDay = allDay,
+        withAlarm = withAlarm && !allDay,
         repeatType = repeatType,
         repeatDays = if (repeatType == Event.REPEAT_WEEKLY) repeatDays else emptySet(),
         repeatUntil = if (repeatType == Event.REPEAT_NONE) null else until,
@@ -420,32 +431,52 @@ internal fun EventDraftEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DraftTimeButton(
-                        label = stringResource(R.string.start_time_label),
-                        secondsOfDay = startSeconds,
-                        onClick = { timeField = EventDraftTimeField.START },
-                        modifier = Modifier.weight(1f),
-                    )
-                    DraftTimeButton(
-                        label = stringResource(R.string.end_time_label),
-                        secondsOfDay = endSeconds,
-                        onClick = { timeField = EventDraftTimeField.END },
-                        enabled = hasEndTime,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
                 SwitchRow(
-                    label = stringResource(R.string.event_has_end_time),
-                    checked = hasEndTime,
-                    onCheckedChange = { hasEndTime = it },
+                    label = stringResource(R.string.event_all_day),
+                    checked = allDay,
+                    onCheckedChange = { allDay = it },
                 )
-                if (!hasEndTime) {
+                if (allDay) {
                     Text(
-                        text = stringResource(R.string.event_no_end_time_helper),
+                        text = stringResource(R.string.event_all_day_helper),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DraftTimeButton(
+                            label = stringResource(R.string.start_time_label),
+                            secondsOfDay = startSeconds,
+                            onClick = { timeField = EventDraftTimeField.START },
+                            modifier = Modifier.weight(1f),
+                        )
+                        DraftTimeButton(
+                            label = stringResource(R.string.end_time_label),
+                            secondsOfDay = endSeconds,
+                            onClick = { timeField = EventDraftTimeField.END },
+                            enabled = hasEndTime,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    SwitchRow(
+                        label = stringResource(R.string.event_has_end_time),
+                        checked = hasEndTime,
+                        onCheckedChange = { hasEndTime = it },
+                    )
+                    if (!hasEndTime) {
+                        Text(
+                            text = stringResource(R.string.event_no_end_time_helper),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        DraftDateButton(
+                            label = stringResource(R.string.event_end_date_label),
+                            date = endDate,
+                            onClick = { showEndDatePicker = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
                 OutlinedTextField(
                     value = note,
@@ -524,21 +555,23 @@ internal fun EventDraftEditDialog(
                         }
                     }
                 }
-                ReminderPicker(
-                    reminderMinutes = reminderMinutes,
-                    onReminderChange = { reminderMinutes = it },
-                )
-                SwitchRow(
-                    label = stringResource(R.string.event_alarm_label),
-                    checked = withAlarm,
-                    onCheckedChange = { withAlarm = it },
-                )
-                if (withAlarm) {
-                    Text(
-                        text = stringResource(R.string.event_alarm_helper),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                if (!allDay) {
+                    ReminderPicker(
+                        reminderMinutes = reminderMinutes,
+                        onReminderChange = { reminderMinutes = it },
                     )
+                    SwitchRow(
+                        label = stringResource(R.string.event_alarm_label),
+                        checked = withAlarm,
+                        onCheckedChange = { withAlarm = it },
+                    )
+                    if (withAlarm) {
+                        Text(
+                            text = stringResource(R.string.event_alarm_helper),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 HorizontalDivider()
                 DraftIssueText(issue)
@@ -563,8 +596,27 @@ internal fun EventDraftEditDialog(
             initialEpochDay = dateEpochDay,
             onDismiss = { showDatePicker = false },
             onConfirm = { picked ->
-                dateEpochDay = picked.toEpochDay()
+                val pickedEpochDay = picked.toEpochDay()
+                dateEpochDay = pickedEpochDay
+                endDateEpochDay = endDateEpochDay.coerceIn(
+                    pickedEpochDay,
+                    pickedEpochDay + Event.MAX_EVENT_DAY_SPAN,
+                )
                 showDatePicker = false
+            },
+        )
+    }
+    if (showEndDatePicker) {
+        DraftDatePickerDialog(
+            initialEpochDay = endDateEpochDay,
+            onDismiss = { showEndDatePicker = false },
+            onConfirm = { picked ->
+                if (picked.toEpochDay() >= dateEpochDay) {
+                    endDateEpochDay = picked.toEpochDay().coerceAtMost(
+                        dateEpochDay + Event.MAX_EVENT_DAY_SPAN,
+                    )
+                }
+                showEndDatePicker = false
             },
         )
     }

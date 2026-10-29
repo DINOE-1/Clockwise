@@ -30,8 +30,13 @@
     <string name="end_time_label">結束時間</string>
     <string name="event_has_end_time">設定結束時間</string>
     <string name="event_no_end_time_helper">關閉後只保留開始時間，適合吃藥、喝水等短暫活動。</string>
+    <string name="event_all_day">全天</string>
+    <string name="event_all_day_helper">全天活動沒有時間，也不會建立鬧鐘或提醒。</string>
+    <string name="event_end_date_label">結束日期</string>
+    <string name="event_time_range_next_day">%1$s – 隔天 %2$s</string>
+    <string name="event_time_range_days_later">%1$s – %2$d 天後 %3$s</string>
     <string name="select_time">選擇時間</string>
-    <string name="invalid_time_range">結束時間需晚於開始時間</string>
+    <string name="invalid_time_range">結束時間需晚於開始時間，或將結束日期設為隔天</string>
     <string name="empty_day">這一天沒有活動</string>
     <string name="day_cell_selected">已選取</string>
     <string name="day_cell_outside_month">非本月</string>

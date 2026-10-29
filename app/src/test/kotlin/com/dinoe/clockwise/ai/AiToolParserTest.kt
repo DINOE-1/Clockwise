@@ -186,6 +186,60 @@ class AiToolParserTest {
     }
 
     @Test
+    fun parsesAllDayEventWithoutTimes() {
+        val event = parser.parseEvents(
+            """
+            {"events":[{
+              "title":"Trip",
+              "date":"2026-10-25",
+              "allDay":true,
+              "withAlarm":true
+            }]}
+            """.trimIndent(),
+        ).single()
+        assertTrue(event.allDay)
+        assertFalse(event.withAlarm)
+        assertEquals(Event.REMINDER_OFF, event.reminderMinutes)
+        assertEquals(0, event.endDayOffset)
+        assertEquals(event.start, event.end)
+    }
+
+    @Test
+    fun parsesOvernightEventWithEndDate() {
+        val event = parser.parseEvents(
+            """
+            {"events":[{
+              "title":"Night shift",
+              "date":"2026-10-25",
+              "start":"23:00",
+              "end":"07:00",
+              "endDate":"2026-10-26"
+            }]}
+            """.trimIndent(),
+        ).single()
+        assertEquals(1, event.endDayOffset)
+        assertFalse(event.allDay)
+    }
+
+    @Test
+    fun rejectsEndDateBeforeStartDate() {
+        val error = expectFailure {
+            parser.parseEvents(
+                """
+                {"events":[{
+                  "title":"Overnight",
+                  "date":"2026-10-25",
+                  "start":"23:00",
+                  "end":"07:00",
+                  "endDate":"2026-10-24"
+                }]}
+                """.trimIndent(),
+            )
+        }
+        assertEquals("invalid_end_date", error.code)
+    }
+
+    @Test
     fun parsesDailyRepeatInclusiveUntil() {
         val events = parser.parseEvents(
             """

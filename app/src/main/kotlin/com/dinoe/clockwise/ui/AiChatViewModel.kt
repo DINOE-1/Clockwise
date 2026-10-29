@@ -973,9 +973,19 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                         buildJsonObject {
                             put("id", event.id)
                             put("date", LocalDate.ofEpochDay(event.date).toString())
-                            put("start", formatSeconds(event.start))
-                            if (event.hasEndTime) {
-                                put("end", formatSeconds(event.end))
+                            if (event.allDay) {
+                                put("allDay", true)
+                            } else {
+                                put("start", formatSeconds(event.start))
+                                if (event.hasEndTime) {
+                                    put("end", formatSeconds(event.endTimeOfDay))
+                                    if (event.endDayOffset > 0) {
+                                        put(
+                                            "endDate",
+                                            LocalDate.ofEpochDay(event.endDateEpochDay).toString(),
+                                        )
+                                    }
+                                }
                             }
                             put("title", AiTokenBudget.truncateChars(event.title, 80))
                             if (event.note.isNotBlank()) {
@@ -1141,6 +1151,8 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             tags = draft.tags.map { Tag(id = it.id, name = it.name) },
                             repeat = draft.recurrenceRule(),
                             reminderMinutes = draft.reminderMinutes,
+                            endDayOffset = draft.endDayOffset,
+                            allDay = draft.allDay,
                         )
                         createdEvents += creation.events.size
                         createdEventAlarms += creation.alarms.size
@@ -1188,6 +1200,8 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             withAlarm = draft.withAlarm,
                             tags = draft.tags.map { Tag(id = it.id, name = it.name) },
                             reminderMinutes = draft.reminderMinutes,
+                            endDayOffset = draft.endDayOffset,
+                            allDay = draft.allDay,
                         )
                         updatedEvents += mutation.affectedEvents
                         deletedAlarms += mutation.deletedAlarms

@@ -205,7 +205,7 @@ fun CalendarScreen(
 
             ViewMode.DAY -> DayTimelineView(
                 date = selectedDate,
-                events = events.filter { it.date == selectedDate.toEpochDay() },
+                events = events.filter { it.occursOn(selectedDate.toEpochDay()) },
                 eventTags = eventTagMap,
                 modifier = contentModifier,
             )
@@ -215,7 +215,7 @@ fun CalendarScreen(
     if (showTimePicker) {
         TimeRangePickerDialog(
             date = selectedDate,
-            events = events.filter { it.date == selectedDate.toEpochDay() },
+            events = events.filter { it.occursOn(selectedDate.toEpochDay()) },
             eventTags = eventTagMap,
             snapMinutes = snapInterval,
             onDismiss = { showTimePicker = false },
@@ -231,13 +231,15 @@ fun CalendarScreen(
         AddEventDialog(
             date = selectedDate,
             allTags = allTags,
+            timePickerStyle = timePickerStyle,
             initialStartSeconds = addDialogInitialTimes?.first,
             initialEndSeconds = addDialogInitialTimes?.second,
             onDismiss = {
                 showAddDialog = false
                 addDialogInitialTimes = null
             },
-            onSave = { title, note, start, end, withAlarm, reminderMinutes, tags, repeat ->
+            onSave = { title, note, start, end, endDayOffset, allDay, withAlarm,
+                reminderMinutes, tags, repeat ->
                 viewModel.addEvent(
                     title = title,
                     note = note,
@@ -248,6 +250,8 @@ fun CalendarScreen(
                     tags = tags,
                     repeat = repeat,
                     reminderMinutes = reminderMinutes,
+                    endDayOffset = endDayOffset,
+                    allDay = allDay,
                 )
                 ensureReminderPermission(reminderMinutes)
                 showAddDialog = false
@@ -264,7 +268,8 @@ fun CalendarScreen(
             initialTags = eventTagMap[event.id].orEmpty(),
             initialWithAlarm = alarms.any { it.eventId == event.id },
             onDismiss = { eventToEdit = null },
-            onSave = { title, note, date, start, end, withAlarm, reminderMinutes, tags, scope ->
+            onSave = { title, note, date, start, end, endDayOffset, allDay, withAlarm,
+                reminderMinutes, tags, scope ->
                 viewModel.updateEventScoped(
                     event = event,
                     scope = scope,
@@ -276,6 +281,8 @@ fun CalendarScreen(
                     withAlarm = withAlarm,
                     tags = tags,
                     reminderMinutes = reminderMinutes,
+                    endDayOffset = endDayOffset,
+                    allDay = allDay,
                 )
                 ensureReminderPermission(reminderMinutes)
                 eventToEdit = null
@@ -390,7 +397,24 @@ private fun MonthView(
     LaunchedEffect(selectedDate) { displayedMonth = YearMonth.from(selectedDate) }
 
     val today = LocalDate.now()
-    val eventsByDay = remember(events) { events.groupBy { it.date } }
+    val eventsByDay = remember(events) {
+        val byDay = mutableMapOf<Long, MutableList<Event>>()
+        events.forEach { event ->
+            var day = event.date
+            val lastDay = event.lastCoveredEpochDay
+            while (day <= lastDay) {
+                byDay.getOrPut(day) { mutableListOf() } += event
+                day++
+            }
+        }
+        byDay.mapValues { (day, dayEvents) ->
+            dayEvents.sortedWith(
+                compareByDescending<Event> { it.allDay }
+                    .thenBy { eventStartOnDay(it, day) }
+                    .thenBy { it.title },
+            )
+        }
+    }
     val firstOfMonth = displayedMonth.atDay(1)
     val lastOfMonth = displayedMonth.atEndOfMonth()
     val gridStart = firstOfMonth.minusDays((firstOfMonth.dayOfWeek.value - 1).toLong())
@@ -726,7 +750,28 @@ private const val MinEventDurationSeconds = 300
 private const val DefaultDraftDurationSeconds = 3_600
 private const val MinLaneDurationSeconds = 60
 
-private data class TimelineEventSlot(val event: Event, val lane: Int, val laneCount: Int)
+private data class TimelineInstance(val event: Event, val start: Int, val end: Int)
+
+private data class TimelineEventSlot(val instance: TimelineInstance, val lane: Int, val laneCount: Int)
+
+/** The part of [event] that falls on [epochDay], clamped to that day's midnight boundaries. */
+private fun timelineInstance(event: Event, epochDay: Long): TimelineInstance? {
+    if (event.allDay || !event.occursOn(epochDay)) return null
+    val dayOffset = epochDay - event.date
+    val daySeconds = (dayOffset * Event.SECONDS_PER_DAY).toInt()
+    val start = (event.start - daySeconds).coerceAtLeast(0)
+    if (start >= Event.SECONDS_PER_DAY) return null
+    val rawEnd = if (event.hasEndTime) event.end else event.start
+    val end = (rawEnd - daySeconds).coerceIn(start, Event.SECONDS_PER_DAY)
+    return TimelineInstance(event, start, end)
+}
+
+/** Start second shown for [event] on [epochDay]; the tail of a cross-day event starts at 00:00. */
+private fun eventStartOnDay(event: Event, epochDay: Long): Int {
+    if (event.allDay) return 0
+    val daySeconds = ((epochDay - event.date) * Event.SECONDS_PER_DAY).toInt()
+    return (event.start - daySeconds).coerceAtLeast(0)
+}
 
 private enum class TimelineDragMode { MOVE, RESIZE_START, RESIZE_END }
 
@@ -784,34 +829,36 @@ private fun autoScrollDelta(
     else -> 0f
 }
 
-private fun layoutTimelineEvents(events: List<Event>): List<TimelineEventSlot> {
-    if (events.isEmpty()) return emptyList()
-    val sorted = events.sortedWith(compareBy({ it.start }, { it.end }))
+private fun layoutTimelineEvents(instances: List<TimelineInstance>): List<TimelineEventSlot> {
+    if (instances.isEmpty()) return emptyList()
+    val sorted = instances.sortedWith(compareBy({ it.start }, { it.end }))
     val result = mutableListOf<TimelineEventSlot>()
     val laneEnds = mutableListOf<Int>()
-    val cluster = mutableListOf<Pair<Event, Int>>()
+    val cluster = mutableListOf<Pair<TimelineInstance, Int>>()
     var clusterEnd = -1
 
     fun flushCluster() {
         val laneCount = laneEnds.size
-        cluster.forEach { (event, lane) -> result += TimelineEventSlot(event, lane, laneCount) }
+        cluster.forEach { (instance, lane) ->
+            result += TimelineEventSlot(instance, lane, laneCount)
+        }
         cluster.clear()
         laneEnds.clear()
         clusterEnd = -1
     }
 
-    for (event in sorted) {
+    for (instance in sorted) {
         // An event without an end time is zero-length; give it a lane so simultaneous entries
         // are still shown side by side instead of stacking on top of each other.
-        val laneEnd = maxOf(event.end, event.start + MinLaneDurationSeconds)
-        if (cluster.isNotEmpty() && event.start >= clusterEnd) flushCluster()
-        val lane = laneEnds.indexOfFirst { it <= event.start }
+        val laneEnd = maxOf(instance.end, instance.start + MinLaneDurationSeconds)
+        if (cluster.isNotEmpty() && instance.start >= clusterEnd) flushCluster()
+        val lane = laneEnds.indexOfFirst { it <= instance.start }
         if (lane == -1) {
             laneEnds += laneEnd
-            cluster += event to (laneEnds.size - 1)
+            cluster += instance to (laneEnds.size - 1)
         } else {
             laneEnds[lane] = laneEnd
-            cluster += event to lane
+            cluster += instance to lane
         }
         clusterEnd = maxOf(clusterEnd, laneEnd)
     }
@@ -829,9 +876,13 @@ private fun DayTimelineView(
     val density = LocalDensity.current
     val scrollState = rememberScrollState()
     val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
+    val allDayEvents = events.filter { it.allDay }
+    val timedEvents = events.filterNot { it.allDay }
 
     LaunchedEffect(date) {
-        val targetSeconds = events.minOfOrNull { it.start }
+        val targetSeconds = timedEvents
+            .mapNotNull { timelineInstance(it, date.toEpochDay()) }
+            .minOfOrNull { it.start }
             ?: if (date == LocalDate.now()) LocalTime.now().toSecondOfDay() else 8 * 3_600
         val targetPx = with(density) { (HourHeight * (targetSeconds / 3_600f)).roundToPx() }
         val initialOffset = (targetPx - with(density) { 48.dp.roundToPx() }).coerceAtLeast(0)
@@ -845,9 +896,13 @@ private fun DayTimelineView(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
         HorizontalDivider()
+        if (allDayEvents.isNotEmpty()) {
+            AllDayEventStrip(events = allDayEvents)
+            HorizontalDivider()
+        }
         TimelineContent(
             date = date,
-            events = events,
+            events = timedEvents,
             eventTags = eventTags,
             snapMinutes = DEFAULT_SNAP_INTERVAL_MINUTES,
             draftTimes = null,
@@ -855,6 +910,34 @@ private fun DayTimelineView(
             scrollState = scrollState,
             modifier = Modifier.fillMaxSize(),
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AllDayEventStrip(events: List<Event>) {
+    val colors = MaterialTheme.colorScheme
+    FlowRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        events.forEach { event ->
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = colors.surfaceVariant,
+            ) {
+                Text(
+                    text = event.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
     }
 }
 
@@ -941,7 +1024,11 @@ private fun TimelineContent(
     scrollState: ScrollState,
     modifier: Modifier = Modifier,
 ) {
-    val slots = remember(events) { layoutTimelineEvents(events) }
+    val slots = remember(events, date) {
+        layoutTimelineEvents(
+            events.mapNotNull { timelineInstance(it, date.toEpochDay()) },
+        )
+    }
     val clockFormatter = rememberClockFormatter()
     BoxWithConstraints(modifier = modifier) {
         val panelWidth = maxWidth - TimelineLabelWidth
@@ -986,17 +1073,21 @@ private fun TimelineContent(
                 }
 
                 slots.forEach { slot ->
-                    val event = slot.event
-                    val blockHeight = (HourHeight * ((event.end - event.start) / 3_600f))
-                        .coerceAtLeast(20.dp)
+                    val instance = slot.instance
+                    val event = instance.event
+                    val blockHeight =
+                        (HourHeight * ((instance.end - instance.start) / 3_600f))
+                            .coerceAtLeast(20.dp)
                     val laneWidth = panelWidth / slot.laneCount
                     TimelineEventBlock(
                         event = event,
+                        startSeconds = instance.start,
+                        endSeconds = instance.end,
                         tags = eventTags[event.id].orEmpty(),
                         modifier = Modifier
                             .offset(
                                 x = laneWidth * slot.lane + 1.dp,
-                                y = HourHeight * (event.start / 3_600f),
+                                y = HourHeight * (instance.start / 3_600f),
                             )
                             .width(laneWidth - 2.dp)
                             .height(blockHeight),
@@ -1051,13 +1142,15 @@ private fun TimelineContent(
 @Composable
 private fun TimelineEventBlock(
     event: Event,
+    startSeconds: Int,
+    endSeconds: Int,
     tags: List<Tag>,
     modifier: Modifier = Modifier,
 ) {
     val tagColors = tags.mapNotNull { tag -> if (tag.color == 0) null else Color(tag.color) }
-    val durationSeconds = (event.end - event.start).coerceAtLeast(0)
+    val durationSeconds = (endSeconds - startSeconds).coerceAtLeast(0)
+    val timeRange = eventTimeRangeLabel(event)
     val shape = RoundedCornerShape(8.dp)
-    val clockFormatter = rememberClockFormatter()
 
     Box(
         modifier = modifier
@@ -1097,10 +1190,9 @@ private fun TimelineEventBlock(
                     )
                 }
             }
-            if (durationSeconds >= 1_800) {
+            if (durationSeconds >= 1_800 && timeRange != null) {
                 Text(
-                    text = "${clockFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))} – " +
-                        clockFormatter.format(LocalTime.ofSecondOfDay(event.end.toLong())),
+                    text = timeRange,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
@@ -1287,7 +1379,6 @@ private fun EventRow(
     val tagColors = tags.mapNotNull { tag ->
         if (tag.color == 0) null else Color(tag.color)
     }
-    val clockFormatter = rememberClockFormatter()
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -1315,12 +1406,7 @@ private fun EventRow(
                     .padding(16.dp),
             ) {
                 Text(
-                    text = if (event.hasEndTime) {
-                        "${clockFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))} – " +
-                            clockFormatter.format(LocalTime.ofSecondOfDay(event.end.toLong()))
-                    } else {
-                        clockFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))
-                    },
+                    text = eventScheduleLabel(event),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -1359,6 +1445,32 @@ private fun EventRow(
     }
 }
 
+@Composable
+private fun eventTimeRangeLabel(event: Event): String? {
+    if (event.allDay || !event.hasEndTime) return null
+    val clockFormatter = rememberClockFormatter()
+    val start = clockFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))
+    val end = clockFormatter.format(LocalTime.ofSecondOfDay(event.endTimeOfDay.toLong()))
+    return when (event.endDayOffset) {
+        0 -> "$start – $end"
+        1 -> stringResource(R.string.event_time_range_next_day, start, end)
+        else -> stringResource(
+            R.string.event_time_range_days_later,
+            start,
+            event.endDayOffset,
+            end,
+        )
+    }
+}
+
+@Composable
+private fun eventScheduleLabel(event: Event): String {
+    if (event.allDay) return stringResource(R.string.event_all_day)
+    val clockFormatter = rememberClockFormatter()
+    val start = clockFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))
+    return eventTimeRangeLabel(event) ?: start
+}
+
 private enum class TimeField { START, END }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -1366,6 +1478,7 @@ private enum class TimeField { START, END }
 private fun AddEventDialog(
     date: LocalDate,
     allTags: List<Tag>,
+    timePickerStyle: TimePickerStyle,
     initialStartSeconds: Int? = null,
     initialEndSeconds: Int? = null,
     onDismiss: () -> Unit,
@@ -1374,6 +1487,8 @@ private fun AddEventDialog(
         note: String,
         start: LocalTime,
         end: LocalTime,
+        endDayOffset: Int,
+        allDay: Boolean,
         withAlarm: Boolean,
         reminderMinutes: Int,
         tags: List<Tag>,
@@ -1381,15 +1496,21 @@ private fun AddEventDialog(
     ) -> Unit,
 ) {
     val (defaultStart, defaultEnd) = remember { defaultTimeRange() }
+    val startInit = initialStartSeconds ?: defaultStart
+    val endInit = initialEndSeconds ?: defaultEnd
     var title by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
-    var startSeconds by rememberSaveable {
-        mutableIntStateOf(initialStartSeconds ?: defaultStart)
-    }
-    var endSeconds by rememberSaveable {
-        mutableIntStateOf(initialEndSeconds ?: defaultEnd)
-    }
+    var startSeconds by rememberSaveable { mutableIntStateOf(startInit) }
+    var endSeconds by rememberSaveable { mutableIntStateOf(endInit) }
     var hasEndTime by rememberSaveable { mutableStateOf(true) }
+    var allDay by rememberSaveable { mutableStateOf(false) }
+    var endDateEpochDay by rememberSaveable {
+        mutableLongStateOf(
+            date.plusDays(if (endInit <= startInit) 1 else 0).toEpochDay(),
+        )
+    }
+    var timeField by remember { mutableStateOf<TimeField?>(null) }
+    var showEndDatePicker by remember { mutableStateOf(false) }
     var withAlarm by rememberSaveable { mutableStateOf(false) }
     var reminderMinutes by rememberSaveable { mutableIntStateOf(Event.REMINDER_OFF) }
     var selectedTagIds by rememberSaveable { mutableStateOf(longArrayOf()) }
@@ -1424,8 +1545,11 @@ private fun AddEventDialog(
         repeatUntilEpochDay > date.toEpochDay()
     val isRepeatDaysValid = repeatType != Event.REPEAT_WEEKLY || repeatDayIds.isNotEmpty()
     val isRepeatSizeValid = repeatPlan?.limitReached != true
+    val endDayOffset = (endDateEpochDay - date.toEpochDay()).toInt().coerceAtLeast(0)
+    val isTimeRangeValid = allDay || !hasEndTime ||
+        endDayOffset > 0 || endSeconds > startSeconds
     val isValid = title.isNotBlank() && isRepeatUntilValid &&
-        isRepeatDaysValid && isRepeatSizeValid
+        isRepeatDaysValid && isRepeatSizeValid && isTimeRangeValid
     val occurrenceCount = repeatPlan?.totalOccurrences ?: 1
     val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
     val untilDateFormatter = rememberLocalizedDateFormatter()
@@ -1471,17 +1595,75 @@ private fun AddEventDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = stringResource(R.string.event_has_end_time),
+                        text = stringResource(R.string.event_all_day),
                         modifier = Modifier.weight(1f),
                     )
-                    Switch(checked = hasEndTime, onCheckedChange = { hasEndTime = it })
+                    Switch(checked = allDay, onCheckedChange = { allDay = it })
                 }
-                if (!hasEndTime) {
+                if (allDay) {
                     Text(
-                        text = stringResource(R.string.event_no_end_time_helper),
+                        text = stringResource(R.string.event_all_day_helper),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TimeSlotButton(
+                            label = stringResource(R.string.start_time_label),
+                            secondsOfDay = startSeconds,
+                            onClick = { timeField = TimeField.START },
+                            modifier = Modifier.weight(1f),
+                        )
+                        TimeSlotButton(
+                            label = stringResource(R.string.end_time_label),
+                            secondsOfDay = endSeconds,
+                            onClick = { timeField = TimeField.END },
+                            enabled = hasEndTime,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.event_has_end_time),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(checked = hasEndTime, onCheckedChange = { hasEndTime = it })
+                    }
+                    if (!hasEndTime) {
+                        Text(
+                            text = stringResource(R.string.event_no_end_time_helper),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        OutlinedButton(
+                            onClick = { showEndDatePicker = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = stringResource(R.string.event_end_date_label),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = LocalDate.ofEpochDay(endDateEpochDay)
+                                        .format(dayFormatter),
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                        }
+                    }
+                    if (!isTimeRangeValid) {
+                        Text(
+                            text = stringResource(R.string.invalid_time_range),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -1570,26 +1752,28 @@ private fun AddEventDialog(
                         }
                     }
                 }
-                ReminderPicker(
-                    reminderMinutes = reminderMinutes,
-                    onReminderChange = { reminderMinutes = it },
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(R.string.event_alarm_label),
-                        modifier = Modifier.weight(1f),
+                if (!allDay) {
+                    ReminderPicker(
+                        reminderMinutes = reminderMinutes,
+                        onReminderChange = { reminderMinutes = it },
                     )
-                    Switch(checked = withAlarm, onCheckedChange = { withAlarm = it })
-                }
-                if (withAlarm) {
-                    Text(
-                        text = stringResource(R.string.event_alarm_helper),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.event_alarm_label),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(checked = withAlarm, onCheckedChange = { withAlarm = it })
+                    }
+                    if (withAlarm) {
+                        Text(
+                            text = stringResource(R.string.event_alarm_helper),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1605,13 +1789,15 @@ private fun AddEventDialog(
                                 title.trim(),
                                 note.trim(),
                                 startTime,
-                                if (hasEndTime) {
+                                if (hasEndTime && !allDay) {
                                     LocalTime.ofSecondOfDay(endSeconds.toLong())
                                 } else {
                                     startTime
                                 },
-                                withAlarm,
-                                reminderMinutes,
+                                if (allDay || !hasEndTime) 0 else endDayOffset,
+                                allDay,
+                                withAlarm && !allDay,
+                                if (allDay) Event.REMINDER_OFF else reminderMinutes,
                                 selectedTags,
                                 repeatRule,
                             )
@@ -1652,6 +1838,51 @@ private fun AddEventDialog(
             DatePicker(state = datePickerState)
         }
     }
+
+    if (showEndDatePicker) {
+        val endDatePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = endDateEpochDay * 86_400_000L,
+        )
+        DatePickerDialog(
+            onDismissRequest = { showEndDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        endDatePickerState.selectedDateMillis?.let { millis ->
+                            val picked = millis / 86_400_000L
+                            if (picked >= date.toEpochDay()) {
+                                endDateEpochDay = picked.coerceAtMost(
+                                    date.toEpochDay() + Event.MAX_EVENT_DAY_SPAN,
+                                )
+                            }
+                        }
+                        showEndDatePicker = false
+                    },
+                ) {
+                    Text(stringResource(R.string.ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEndDatePicker = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        ) {
+            DatePicker(state = endDatePickerState)
+        }
+    }
+
+    timeField?.let { field ->
+        TimePickerDialog(
+            initialSecondsOfDay = if (field == TimeField.START) startSeconds else endSeconds,
+            style = timePickerStyle,
+            onDismiss = { timeField = null },
+            onConfirm = { picked ->
+                if (field == TimeField.START) startSeconds = picked else endSeconds = picked
+                timeField = null
+            },
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1669,6 +1900,8 @@ private fun EditEventDialog(
         date: LocalDate,
         start: LocalTime,
         end: LocalTime,
+        endDayOffset: Int,
+        allDay: Boolean,
         withAlarm: Boolean,
         reminderMinutes: Int,
         tags: List<Tag>,
@@ -1679,8 +1912,12 @@ private fun EditEventDialog(
     var note by rememberSaveable(event.id) { mutableStateOf(event.note) }
     var dateEpochDay by rememberSaveable(event.id) { mutableLongStateOf(event.date) }
     var startSeconds by rememberSaveable(event.id) { mutableIntStateOf(event.start) }
-    var endSeconds by rememberSaveable(event.id) { mutableIntStateOf(event.end) }
+    var endSeconds by rememberSaveable(event.id) { mutableIntStateOf(event.endTimeOfDay) }
+    var endDateEpochDay by rememberSaveable(event.id) {
+        mutableLongStateOf(event.endDateEpochDay)
+    }
     var hasEndTime by rememberSaveable(event.id) { mutableStateOf(event.hasEndTime) }
+    var allDay by rememberSaveable(event.id) { mutableStateOf(event.allDay) }
     var withAlarm by rememberSaveable(event.id) { mutableStateOf(initialWithAlarm) }
     var reminderMinutes by rememberSaveable(event.id) {
         mutableIntStateOf(event.reminderMinutes)
@@ -1693,6 +1930,7 @@ private fun EditEventDialog(
     }
     var timeField by remember { mutableStateOf<TimeField?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showEndDatePicker by remember { mutableStateOf(false) }
 
     val isSeries = event.seriesId != 0L
     val selectedTags = allTags.filter { it.id in selectedTagIds }
@@ -1703,7 +1941,10 @@ private fun EditEventDialog(
             else -> selectedTagIds
         }
     }
-    val isValid = title.isNotBlank() && (!hasEndTime || endSeconds > startSeconds)
+    val endDayOffset = (endDateEpochDay - dateEpochDay).toInt().coerceAtLeast(0)
+    val isTimeRangeValid = allDay || !hasEndTime ||
+        endDayOffset > 0 || endSeconds > startSeconds
+    val isValid = title.isNotBlank() && isTimeRangeValid
     val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1745,44 +1986,80 @@ private fun EditEventDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TimeSlotButton(
-                        label = stringResource(R.string.start_time_label),
-                        secondsOfDay = startSeconds,
-                        onClick = { timeField = TimeField.START },
-                        modifier = Modifier.weight(1f),
-                    )
-                    TimeSlotButton(
-                        label = stringResource(R.string.end_time_label),
-                        secondsOfDay = endSeconds,
-                        onClick = { timeField = TimeField.END },
-                        enabled = hasEndTime,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = stringResource(R.string.event_has_end_time),
+                        text = stringResource(R.string.event_all_day),
                         modifier = Modifier.weight(1f),
                     )
-                    Switch(checked = hasEndTime, onCheckedChange = { hasEndTime = it })
+                    Switch(checked = allDay, onCheckedChange = { allDay = it })
                 }
-                if (!hasEndTime) {
+                if (allDay) {
                     Text(
-                        text = stringResource(R.string.event_no_end_time_helper),
+                        text = stringResource(R.string.event_all_day_helper),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-                if (hasEndTime && endSeconds <= startSeconds) {
-                    Text(
-                        text = stringResource(R.string.invalid_time_range),
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TimeSlotButton(
+                            label = stringResource(R.string.start_time_label),
+                            secondsOfDay = startSeconds,
+                            onClick = { timeField = TimeField.START },
+                            modifier = Modifier.weight(1f),
+                        )
+                        TimeSlotButton(
+                            label = stringResource(R.string.end_time_label),
+                            secondsOfDay = endSeconds,
+                            onClick = { timeField = TimeField.END },
+                            enabled = hasEndTime,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.event_has_end_time),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(checked = hasEndTime, onCheckedChange = { hasEndTime = it })
+                    }
+                    if (!hasEndTime) {
+                        Text(
+                            text = stringResource(R.string.event_no_end_time_helper),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        OutlinedButton(
+                            onClick = { showEndDatePicker = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = stringResource(R.string.event_end_date_label),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = LocalDate.ofEpochDay(endDateEpochDay)
+                                        .format(dayFormatter),
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                        }
+                    }
+                    if (!isTimeRangeValid) {
+                        Text(
+                            text = stringResource(R.string.invalid_time_range),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
                 OutlinedTextField(
                     value = note,
@@ -1795,26 +2072,28 @@ private fun EditEventDialog(
                     selectedTags = selectedTags,
                     onToggle = onTagToggle,
                 )
-                ReminderPicker(
-                    reminderMinutes = reminderMinutes,
-                    onReminderChange = { reminderMinutes = it },
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(R.string.event_alarm_label),
-                        modifier = Modifier.weight(1f),
+                if (!allDay) {
+                    ReminderPicker(
+                        reminderMinutes = reminderMinutes,
+                        onReminderChange = { reminderMinutes = it },
                     )
-                    Switch(checked = withAlarm, onCheckedChange = { withAlarm = it })
-                }
-                if (withAlarm) {
-                    Text(
-                        text = stringResource(R.string.event_alarm_helper),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.event_alarm_label),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(checked = withAlarm, onCheckedChange = { withAlarm = it })
+                    }
+                    if (withAlarm) {
+                        Text(
+                            text = stringResource(R.string.event_alarm_helper),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 if (isSeries) {
                     HorizontalDivider()
@@ -1856,13 +2135,15 @@ private fun EditEventDialog(
                                 note.trim(),
                                 LocalDate.ofEpochDay(dateEpochDay),
                                 startTime,
-                                if (hasEndTime) {
+                                if (hasEndTime && !allDay) {
                                     LocalTime.ofSecondOfDay(endSeconds.toLong())
                                 } else {
                                     startTime
                                 },
-                                withAlarm,
-                                reminderMinutes,
+                                if (allDay || !hasEndTime) 0 else endDayOffset,
+                                allDay,
+                                withAlarm && !allDay,
+                                if (allDay) Event.REMINDER_OFF else reminderMinutes,
                                 selectedTags,
                                 scope,
                             )
@@ -1886,7 +2167,12 @@ private fun EditEventDialog(
                 TextButton(
                     onClick = {
                         datePickerState.selectedDateMillis?.let { millis ->
-                            dateEpochDay = millis / 86_400_000L
+                            val picked = millis / 86_400_000L
+                            dateEpochDay = picked
+                            endDateEpochDay = endDateEpochDay.coerceIn(
+                                picked,
+                                picked + Event.MAX_EVENT_DAY_SPAN,
+                            )
                         }
                         showDatePicker = false
                     },
@@ -1901,6 +2187,39 @@ private fun EditEventDialog(
             },
         ) {
             DatePicker(state = datePickerState)
+        }
+    }
+
+    if (showEndDatePicker) {
+        val endDatePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = endDateEpochDay * 86_400_000L,
+        )
+        DatePickerDialog(
+            onDismissRequest = { showEndDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        endDatePickerState.selectedDateMillis?.let { millis ->
+                            val picked = millis / 86_400_000L
+                            if (picked >= dateEpochDay) {
+                                endDateEpochDay = picked.coerceAtMost(
+                                    dateEpochDay + Event.MAX_EVENT_DAY_SPAN,
+                                )
+                            }
+                        }
+                        showEndDatePicker = false
+                    },
+                ) {
+                    Text(stringResource(R.string.ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEndDatePicker = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        ) {
+            DatePicker(state = endDatePickerState)
         }
     }
 

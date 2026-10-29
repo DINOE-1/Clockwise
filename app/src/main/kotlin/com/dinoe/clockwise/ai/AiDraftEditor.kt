@@ -4,6 +4,7 @@ import com.dinoe.clockwise.data.Event
 import com.dinoe.clockwise.data.MAX_OCCURRENCES_PER_SERIES
 import com.dinoe.clockwise.data.planRecurrence
 import java.time.LocalDateTime
+import java.time.LocalTime
 
 enum class AiDraftIssue {
     ALARM_IN_PAST,
@@ -41,9 +42,13 @@ object AiDraftEditor {
 
     fun eventIssue(draft: EventDraft, now: LocalDateTime): AiDraftIssue? {
         if (draft.title.isBlank()) return AiDraftIssue.TITLE_REQUIRED
-        if (draft.end.isBefore(draft.start)) return AiDraftIssue.INVALID_TIME_RANGE
-        if (draft.withAlarm && !draft.date.atTime(draft.start).isAfter(now)) {
-            return AiDraftIssue.ALARM_IN_PAST
+        if (!draft.allDay) {
+            val startDateTime = draft.date.atTime(draft.start)
+            val endDateTime = draft.date.plusDays(draft.endDayOffset.toLong()).atTime(draft.end)
+            if (endDateTime.isBefore(startDateTime)) return AiDraftIssue.INVALID_TIME_RANGE
+            if (draft.withAlarm && !startDateTime.isAfter(now)) {
+                return AiDraftIssue.ALARM_IN_PAST
+            }
         }
         if (draft.repeatType == Event.REPEAT_NONE) return null
         val until = draft.repeatUntil ?: return AiDraftIssue.REPEAT_UNTIL_INVALID
@@ -75,19 +80,27 @@ object AiDraftEditor {
     fun normalizeEvent(draft: EventDraft): EventDraft {
         val title = draft.title.trim().take(MAX_EVENT_TITLE_CHARS)
         val note = draft.note.trim().take(MAX_NOTE_CHARS)
-        if (draft.repeatType == Event.REPEAT_NONE) {
-            return draft.copy(
-                title = title,
-                note = note,
+        val normalized = draft.copy(
+            title = title,
+            note = note,
+            start = if (draft.allDay) LocalTime.MIDNIGHT else draft.start,
+            end = if (draft.allDay) LocalTime.MIDNIGHT else draft.end,
+            withAlarm = draft.withAlarm && !draft.allDay,
+            reminderMinutes = if (draft.allDay) Event.REMINDER_OFF else draft.reminderMinutes,
+            endDayOffset = if (draft.allDay) 0 else draft.endDayOffset,
+        )
+        if (normalized.repeatType == Event.REPEAT_NONE) {
+            return normalized.copy(
                 repeatDays = emptySet(),
                 repeatUntil = null,
                 occurrenceCount = 1,
             )
         }
-        return draft.copy(
-            title = title,
-            note = note,
-            occurrenceCount = planRecurrence(draft.date, draft.recurrenceRule()).totalOccurrences,
+        return normalized.copy(
+            occurrenceCount = planRecurrence(
+                normalized.date,
+                normalized.recurrenceRule(),
+            ).totalOccurrences,
         )
     }
 }

@@ -194,7 +194,9 @@ object AiTools {
                         "daily and weekly require until. withAlarm creates an alarm at each start. " +
                         "reminderMinutes 5/10/30 shows a notification before each occurrence; 0 " +
                         "or omitted disables it. Omit end for a quick activity that only needs a " +
-                        "start time.",
+                        "start time. Set allDay=true for an all-day event. For an event that ends " +
+                        "on a later day (for example 23:00 to 07:00), pass endDate with the end " +
+                        "day; end may then be earlier than start.",
                     parameters = buildJsonObject {
                         put("type", "object")
                         putJsonObject("properties") {
@@ -207,12 +209,34 @@ object AiTools {
                                         putJsonObject("title") { put("type", "string") }
                                         putJsonObject("note") { put("type", "string") }
                                         putJsonObject("date") { put("type", "string") }
-                                        putJsonObject("start") { put("type", "string") }
+                                        putJsonObject("start") {
+                                            put("type", "string")
+                                            put(
+                                                "description",
+                                                "HH:mm; ignored when allDay is true",
+                                            )
+                                        }
                                         putJsonObject("end") {
                                             put("type", "string")
                                             put(
                                                 "description",
-                                                "HH:mm; omit for an event with only a start time",
+                                                "HH:mm; omit for an event with only a start " +
+                                                    "time; ignored when allDay is true",
+                                            )
+                                        }
+                                        putJsonObject("endDate") {
+                                            put("type", "string")
+                                            put(
+                                                "description",
+                                                "Optional YYYY-MM-DD end day; use for events " +
+                                                    "that finish on a later day",
+                                            )
+                                        }
+                                        putJsonObject("allDay") {
+                                            put("type", "boolean")
+                                            put(
+                                                "description",
+                                                "All-day event with no time; defaults to false",
                                             )
                                         }
                                         putJsonObject("withAlarm") { put("type", "boolean") }
@@ -351,7 +375,9 @@ object AiTools {
                     description = "Update existing events. Call list_events first for ids. " +
                         "Omitted fields keep their value; tags replace the full list; " +
                         "reminderMinutes 0/5/10/30 changes the notification reminder; repeat " +
-                        "rules cannot be changed. Date cannot change with entire_series.",
+                        "rules cannot be changed. Date cannot change with entire_series. Use " +
+                        "allDay=true for an all-day event and endDate when the event ends on a " +
+                        "later day.",
                     parameters = buildJsonObject {
                         put("type", "object")
                         putJsonObject("properties") {
@@ -384,6 +410,22 @@ object AiTools {
                                             put(
                                                 "description",
                                                 "HH:mm; equal to start removes the end time",
+                                            )
+                                        }
+                                        putJsonObject("endDate") {
+                                            put("type", "string")
+                                            put(
+                                                "description",
+                                                "YYYY-MM-DD; use when the event ends on a " +
+                                                    "later day",
+                                            )
+                                        }
+                                        putJsonObject("allDay") {
+                                            put("type", "boolean")
+                                            put(
+                                                "description",
+                                                "All-day event with no time; false restores " +
+                                                    "timed events",
                                             )
                                         }
                                         putJsonObject("withAlarm") { put("type", "boolean") }
