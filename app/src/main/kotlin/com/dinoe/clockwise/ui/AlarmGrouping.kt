@@ -5,7 +5,8 @@ import com.dinoe.clockwise.data.Event
 import java.time.LocalDateTime
 
 data class AlarmGroup(
-    // "series:<seriesId>" for repeating events, "alarm:<alarmId>" for everything else.
+    // "stack:<stackId>" for a manual stack, "series:<seriesId>" for repeating events, and
+    // "alarm:<alarmId>" for everything else.
     val key: String,
     // Members sorted by firing time; alarms that already passed are removed.
     val alarms: List<Alarm>,
@@ -27,8 +28,13 @@ fun buildAlarmGroups(
     return alarms
         .filterNot { it.isPast(now) }
         .groupBy { alarm ->
+            val stackId = alarm.stackId
             val seriesId = alarm.eventId?.let(seriesByEventId::get)?.takeIf { it != 0L }
-            if (seriesId != null) "series:$seriesId" else "alarm:${alarm.id}"
+            when {
+                stackId != null -> "stack:$stackId"
+                seriesId != null -> "series:$seriesId"
+                else -> "alarm:${alarm.id}"
+            }
         }
         .map { (key, groupAlarms) ->
             AlarmGroup(

@@ -6,8 +6,8 @@ package com.dinoe.clockwise.ai
  * quarter token, plus a small per-message overhead.
  */
 object AiTokenBudget {
-    const val MAX_STATIC_TOKENS = 3_000
-    const val MAX_DYNAMIC_TOKENS = 500
+    const val MAX_STATIC_TOKENS = 4_000
+    const val MAX_DYNAMIC_TOKENS = 700
     const val MAX_HISTORY_TOKENS = 1_600
     const val MAX_CURRENT_TOOL_TOKENS = 2_400
     const val MAX_TOOL_RESULT_TOKENS = 1_200

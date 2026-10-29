@@ -1864,7 +1864,7 @@ private fun EditEventDialog(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ReminderPicker(
+internal fun ReminderPicker(
     reminderMinutes: Int,
     onReminderChange: (Int) -> Unit,
 ) {

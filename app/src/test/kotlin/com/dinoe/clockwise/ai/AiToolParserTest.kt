@@ -33,6 +33,43 @@ class AiToolParserTest {
     }
 
     @Test
+    fun parsesAlarmStackWithSharedFields() {
+        val stack = parser.parseAlarmStacks(
+            """
+            {"stacks":[{
+              "times":["07:20","07:00","07:10"],
+              "name":"Wake up",
+              "note":"Three chances",
+              "oneTime":true,
+              "tags":["personal"]
+            }]}
+            """.trimIndent(),
+        ).single()
+        assertEquals(listOf("07:00", "07:10", "07:20"), stack.times.map { it.toString() })
+        assertEquals("Wake up", stack.name)
+        assertEquals("Three chances", stack.note)
+        assertTrue(stack.enabled)
+        assertTrue(stack.oneTime)
+        assertEquals(listOf("personal"), stack.tags.map { it.name })
+    }
+
+    @Test
+    fun rejectsAlarmStackWithFewerThanTwoTimes() {
+        val error = expectFailure {
+            parser.parseAlarmStacks("""{"stacks":[{"times":["07:00"]}]}""")
+        }
+        assertEquals("invalid_time", error.code)
+    }
+
+    @Test
+    fun rejectsAlarmStackWithDuplicateTimes() {
+        val error = expectFailure {
+            parser.parseAlarmStacks("""{"stacks":[{"times":["07:00","07:00"]}]}""")
+        }
+        assertEquals("duplicate_time", error.code)
+    }
+
+    @Test
     fun parsesDisabledAndOneTimeAlarms() {
         val alarm = parser.parseAlarms(
             """{"alarms":[{"time":"07:00","enabled":false,"oneTime":true}]}""",

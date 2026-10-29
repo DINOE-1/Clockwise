@@ -35,6 +35,15 @@ data class AlarmDraft(
     val tags: List<TagRef>,
 )
 
+data class AlarmStackDraft(
+    val times: List<LocalTime>,
+    val name: String,
+    val note: String,
+    val enabled: Boolean,
+    val oneTime: Boolean,
+    val tags: List<TagRef>,
+)
+
 data class EventDraft(
     val title: String,
     val note: String,
@@ -140,6 +149,19 @@ class AiToolParser(
             )
         }
         return items.mapIndexed { index, item -> parseAlarm(item, index) }
+    }
+
+    fun parseAlarmStacks(arguments: String): List<AlarmStackDraft> {
+        val root = parseRoot(arguments)
+        val items = root.array("stacks")
+        if (items.isEmpty()) throw error("empty", "stacks must contain at least one item")
+        if (items.size > AiTokenBudget.MAX_BATCH_ITEMS) {
+            throw error(
+                "too_many_items",
+                "create at most ${AiTokenBudget.MAX_BATCH_ITEMS} alarm stacks per call",
+            )
+        }
+        return items.mapIndexed { index, item -> parseAlarmStack(item, index) }
     }
 
     fun parseEvents(arguments: String): List<EventDraft> {
@@ -464,6 +486,54 @@ class AiToolParser(
         return AlarmDraft(
             time = time,
             date = date,
+            name = name,
+            note = note,
+            enabled = enabled,
+            oneTime = oneTime,
+            tags = tags,
+        )
+    }
+
+    private fun parseAlarmStack(element: JsonElement, index: Int): AlarmStackDraft {
+        val item = element as? JsonObject
+            ?: throw error("invalid_item", "stacks[$index] must be an object")
+        val values = item.arrayOrNull("times")
+            ?: throw error(
+                "invalid_time",
+                "stacks[$index].times must be an array of HH:mm strings",
+            )
+        if (values.size < 2) {
+            throw error("invalid_time", "stacks[$index].times needs at least two times")
+        }
+        if (values.size > AiTokenBudget.MAX_BATCH_ITEMS) {
+            throw error(
+                "too_many_items",
+                "stacks[$index].times allows at most ${AiTokenBudget.MAX_BATCH_ITEMS} times",
+            )
+        }
+        val times = values.mapIndexed { timeIndex, value ->
+            val raw = (value as? JsonPrimitive)?.contentOrNull?.trim()
+                ?: throw error(
+                    "invalid_time",
+                    "stacks[$index].times[$timeIndex] must be HH:mm",
+                )
+            val match = TIME_PATTERN.matchEntire(raw)
+                ?: throw error(
+                    "invalid_time",
+                    "stacks[$index].times[$timeIndex] must be HH:mm, got '$raw'",
+                )
+            LocalTime.of(match.groupValues[1].toInt(), match.groupValues[2].toInt())
+        }
+        if (times.distinct().size != times.size) {
+            throw error("duplicate_time", "stacks[$index].times must not contain duplicates")
+        }
+        val name = item.stringOrNull("name")?.trim().orEmpty().take(100)
+        val note = item.stringOrNull("note")?.trim().orEmpty().take(500)
+        val enabled = item.booleanOrNull("enabled") ?: true
+        val oneTime = item.booleanOrNull("oneTime") ?: false
+        val tags = parseTags(item["tags"], "stacks[$index].tags")
+        return AlarmStackDraft(
+            times = times.sorted(),
             name = name,
             note = note,
             enabled = enabled,

@@ -8,6 +8,7 @@ import com.dinoe.clockwise.alarm.ReminderScheduler
 import com.dinoe.clockwise.alarm.ScheduleResult
 import java.time.LocalDate
 import java.time.LocalTime
+import kotlin.random.Random
 
 data class AlarmCreation(
     val alarm: Alarm,
@@ -100,6 +101,51 @@ class ScheduleWriter(context: Context) {
             )
         }
         return finalizeAlarm(alarm)
+    }
+
+    /**
+     * Creates several plain alarms that share one stack id, so the alarm list shows them as a
+     * single expandable card. The fields that are not per-time (name, note, one-time, tags) are
+     * shared by every alarm in the stack.
+     */
+    suspend fun addAlarmStack(
+        times: List<Int>,
+        name: String = "",
+        note: String = "",
+        enabled: Boolean = true,
+        oneTime: Boolean = false,
+        tags: List<Tag> = emptyList(),
+    ): List<AlarmCreation> {
+        require(times.size >= 2) { "An alarm stack needs at least two times" }
+        require(times.all { it in 0..86_399 }) { "Invalid time of day: $times" }
+        val orderedTimes = times.distinct().sorted()
+        require(orderedTimes.size == times.size) { "Alarm stack times must be unique" }
+        val selectedTags = tags.take(MAX_TAGS_PER_ITEM)
+        val stackId = Random.nextLong(1, Long.MAX_VALUE)
+        val persisted = database.withTransaction {
+            if (enabled) ensureAlarmCapacity(orderedTimes.size)
+            val drafts = orderedTimes.map { time ->
+                Alarm(
+                    time = time,
+                    name = name,
+                    note = note,
+                    enabled = enabled,
+                    oneTime = oneTime,
+                    stackId = stackId,
+                )
+            }
+            val ids = alarmDao.insertAll(drafts)
+            val alarms = drafts.mapIndexed { index, alarm -> alarm.copy(id = ids[index]) }
+            if (selectedTags.isNotEmpty()) {
+                alarms.forEach { alarm ->
+                    tagDao.insertAlarmTags(
+                        selectedTags.map { AlarmTagCrossRef(alarm.id, it.id) },
+                    )
+                }
+            }
+            alarms
+        }
+        return persisted.map { alarm -> finalizeAlarm(alarm) }
     }
 
     suspend fun addEvent(

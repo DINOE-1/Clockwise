@@ -19,6 +19,7 @@ import com.dinoe.clockwise.ai.AiChatSessionCodec
 import com.dinoe.clockwise.ai.AiConfig
 import com.dinoe.clockwise.ai.AiContextBuilder
 import com.dinoe.clockwise.ai.AiContextOverflowException
+import com.dinoe.clockwise.ai.AiDraftEditor
 import com.dinoe.clockwise.ai.AiErrorKind
 import com.dinoe.clockwise.ai.AiImageAttachment
 import com.dinoe.clockwise.ai.AiImageProcessor
@@ -32,6 +33,7 @@ import com.dinoe.clockwise.ai.AiTools
 import com.dinoe.clockwise.ai.AiUsage
 import com.dinoe.clockwise.ai.AlarmDeleteDraft
 import com.dinoe.clockwise.ai.AlarmDraft
+import com.dinoe.clockwise.ai.AlarmStackDraft
 import com.dinoe.clockwise.ai.AlarmUpdateDraft
 import com.dinoe.clockwise.ai.ChatImage
 import com.dinoe.clockwise.ai.ChatMessage
@@ -89,9 +91,16 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     private val eventDao = app.database.eventDao()
     private val chatSessionDao = app.database.chatSessionDao()
     private val imageProcessor = AiImageProcessor(app)
+    private val preferences = ThemePreferences(app)
 
     val sessions: StateFlow<List<AiChatSessionSummary>> = chatSessionDao.observeSummaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val allTags: StateFlow<List<Tag>> = tagDao.observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val timePickerStyle: StateFlow<TimePickerStyle> = preferences.timePickerStyle
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TimePickerStyle.WHEEL)
 
     val items = mutableStateListOf<AiChatItem>()
     var input by mutableStateOf("")
@@ -274,7 +283,8 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         items += AiChatItem.Assistant(nextItemId(), summary)
         markProposal(pending.proposalId, ProposalState.CANCELLED)
         chatSession.addAction(
-            "cancelled proposal: ${pending.alarms.size} alarms, ${pending.events.size} events",
+            "cancelled proposal: ${pending.alarms.size} alarms, " +
+                "${pending.alarmStacks.size} stacks, ${pending.events.size} events",
         )
         chatSession.completeTurn(pending.userText, summary, pending.reasoningContent)
         currentTurn.clear()
@@ -282,6 +292,36 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         pendingWrite = null
         pendingProposalId = null
         viewModelScope.launch { persistSafely() }
+    }
+
+    fun updateAlarmDraft(index: Int, draft: AlarmDraft) {
+        val pending = pendingWrite ?: return
+        if (isBusy || index !in pending.alarms.indices) return
+        val alarms = pending.alarms.toMutableList().apply {
+            this[index] = AiDraftEditor.normalizeAlarm(draft)
+        }
+        pendingWrite = pending.copy(alarms = alarms)
+        updateProposalItem(pending.proposalId) { it.copy(alarms = alarms) }
+    }
+
+    fun updateAlarmStackDraft(index: Int, draft: AlarmStackDraft) {
+        val pending = pendingWrite ?: return
+        if (isBusy || index !in pending.alarmStacks.indices) return
+        val alarmStacks = pending.alarmStacks.toMutableList().apply {
+            this[index] = AiDraftEditor.normalizeStack(draft)
+        }
+        pendingWrite = pending.copy(alarmStacks = alarmStacks)
+        updateProposalItem(pending.proposalId) { it.copy(alarmStacks = alarmStacks) }
+    }
+
+    fun updateEventDraft(index: Int, draft: EventDraft) {
+        val pending = pendingWrite ?: return
+        if (isBusy || index !in pending.events.indices) return
+        val events = pending.events.toMutableList().apply {
+            this[index] = AiDraftEditor.normalizeEvent(draft)
+        }
+        pendingWrite = pending.copy(events = events)
+        updateProposalItem(pending.proposalId) { it.copy(events = events) }
     }
 
     fun clearConversation() {
@@ -715,6 +755,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                     eventTagsById = eventTagsById,
                 )
                 val alarms = mutableListOf<AlarmDraft>()
+                val alarmStacks = mutableListOf<AlarmStackDraft>()
                 val events = mutableListOf<EventDraft>()
                 val alarmUpdates = mutableListOf<AlarmUpdateDraft>()
                 val alarmDeletes = mutableListOf<AlarmDeleteDraft>()
@@ -727,6 +768,9 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                     try {
                         when (call.name) {
                             AiTools.CREATE_ALARMS -> alarms += parser.parseAlarms(call.arguments)
+                            AiTools.CREATE_ALARM_STACKS ->
+                                alarmStacks += parser.parseAlarmStacks(call.arguments)
+
                             AiTools.CREATE_EVENTS -> events += parser.parseEvents(call.arguments)
                             AiTools.UPDATE_ALARMS ->
                                 alarmUpdates += parser.parseAlarmUpdates(call.arguments)
@@ -763,6 +807,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 val totalActions = alarms.size + events.size +
+                    alarmStacks.sumOf { it.times.size } +
                     alarmUpdates.size + alarmDeletes.size +
                     eventUpdates.size + eventDeletes.size
                 if (totalActions == 0) {
@@ -818,6 +863,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                 val proposal = AiChatItem.Proposal(
                     id = nextItemId(),
                     alarms = alarms,
+                    alarmStacks = alarmStacks,
                     events = events,
                     alarmUpdates = alarmUpdates,
                     alarmDeletes = alarmDeletes,
@@ -830,6 +876,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                     proposalId = proposal.id,
                     userText = currentUserText,
                     alarms = alarms,
+                    alarmStacks = alarmStacks,
                     events = events,
                     alarmUpdates = alarmUpdates,
                     alarmDeletes = alarmDeletes,
@@ -1057,6 +1104,30 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
 
+                    pending.alarmStacks.forEach { draft ->
+                        val creations = writer.addAlarmStack(
+                            times = draft.times.map { it.toSecondOfDay() },
+                            name = draft.name,
+                            note = draft.note,
+                            enabled = draft.enabled,
+                            oneTime = draft.oneTime,
+                            tags = draft.tags.map { Tag(id = it.id, name = it.name) },
+                        )
+                        createdPlainAlarms += creations.size
+                        creations.forEach { creation ->
+                            if (creation.alarm.enabled) {
+                                if (creation.scheduled) {
+                                    scheduledAlarms++
+                                } else {
+                                    unscheduledAlarms++
+                                }
+                            }
+                        }
+                        if (notes.size < 5) {
+                            notes += "created alarm stack of ${creations.size} ${draft.name}".trim()
+                        }
+                    }
+
                     pending.events.forEach { draft ->
                         val creation = writer.addEvent(
                             title = draft.title,
@@ -1250,10 +1321,16 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun markProposal(id: Long, state: ProposalState) {
+        updateProposalItem(id) { it.copy(state = state) }
+    }
+
+    private fun updateProposalItem(
+        id: Long,
+        transform: (AiChatItem.Proposal) -> AiChatItem.Proposal,
+    ) {
         val index = items.indexOfFirst { it is AiChatItem.Proposal && it.id == id }
         if (index < 0) return
-        val item = items[index] as AiChatItem.Proposal
-        items[index] = item.copy(state = state)
+        items[index] = transform(items[index] as AiChatItem.Proposal)
     }
 
     private fun rejectWriteCalls(
@@ -1308,6 +1385,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         val proposalId: Long,
         val userText: String,
         val alarms: List<AlarmDraft>,
+        val alarmStacks: List<AlarmStackDraft>,
         val events: List<EventDraft>,
         val alarmUpdates: List<AlarmUpdateDraft>,
         val alarmDeletes: List<AlarmDeleteDraft>,

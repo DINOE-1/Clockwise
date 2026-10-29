@@ -57,6 +57,16 @@
     <string name="alarm_expand_style_drawer_hint">Cards slide down</string>
     <string name="alarm_expand_style_fade_hint">Cards fade in while moving</string>
     <string name="add_alarm">New alarm</string>
+    <string name="add_alarm_single">Single alarm</string>
+    <string name="add_alarm_stack">Multiple alarms</string>
+    <string name="add_alarm_stack_title">New multiple alarms</string>
+    <string name="alarm_stack_times_helper">Create alarms at different times; they appear as one stack in the alarm list.</string>
+    <string name="alarm_stack_time_number">Time %1$d</string>
+    <string name="alarm_stack_add_time">Add time</string>
+    <string name="alarm_stack_remove_time">Remove time</string>
+    <string name="alarm_stack_min_times">Add at least two times</string>
+    <string name="alarm_stack_duplicate_time">Each time must be different</string>
+    <string name="alarm_stack_saved">Created %1$d alarms</string>
     <string name="save">Save</string>
     <string name="alarm_time_label">Time</string>
     <string name="alarm_name_label">Name</string>
@@ -243,6 +253,7 @@
 
     <string name="ai_proposal_title">Ready to apply changes</string>
     <string name="ai_proposal_alarms">Alarms (%1$d)</string>
+    <string name="ai_proposal_alarm_stacks">Alarm stacks (%1$d)</string>
     <string name="ai_proposal_events">Events (%1$d)</string>
     <string name="ai_proposal_event_occurrences">%1$d events</string>
     <string name="ai_proposal_alarm_at_start">Ring at start</string>
@@ -408,6 +419,19 @@
     <string name="ai_proposal_scope_this">This event</string>
     <string name="ai_proposal_scope_subsequent">This and following</string>
     <string name="ai_proposal_scope_series">Whole series</string>
+    <string name="ai_proposal_edit">Edit</string>
+    <string name="ai_edit_alarm_title">Edit alarm</string>
+    <string name="ai_edit_stack_title">Edit alarm stack</string>
+    <string name="ai_edit_event_title">Edit event</string>
+    <string name="ai_edit_confirm">Confirm and create</string>
+    <string name="ai_edit_date_none">No date</string>
+    <string name="ai_edit_clear_date">Clear date</string>
+    <string name="ai_edit_alarm_in_past">Time must be in the future</string>
+    <string name="ai_edit_title_required">Enter an event title</string>
+    <string name="ai_edit_repeat_weekday_missing">Weekly repeat must include the event weekday</string>
+    <string name="ai_edit_stack_times_invalid">Needs at least two different times</string>
+    <string name="ai_edit_add_time">Add time</string>
+    <string name="ai_edit_remove_time">Remove time</string>
     <string name="ai_usage_cache_rate">Cache hit rate: %1$s</string>
     <string name="ai_usage_cache_unknown">—</string>
     <string name="ai_usage_cache_hint">A higher cache hit rate lowers the cost of repeated input tokens.</string>

@@ -13,6 +13,7 @@ object AiTools {
     const val LIST_ALARMS = "list_alarms"
     const val LIST_EVENTS = "list_events"
     const val CREATE_ALARMS = "create_alarms"
+    const val CREATE_ALARM_STACKS = "create_alarm_stacks"
     const val CREATE_EVENTS = "create_events"
     const val UPDATE_ALARMS = "update_alarms"
     const val DELETE_ALARMS = "delete_alarms"
@@ -21,6 +22,7 @@ object AiTools {
 
     val writeTools: Set<String> = setOf(
         CREATE_ALARMS,
+        CREATE_ALARM_STACKS,
         CREATE_EVENTS,
         UPDATE_ALARMS,
         DELETE_ALARMS,
@@ -123,6 +125,64 @@ object AiTools {
                             }
                         }
                         putJsonArray("required") { add("alarms") }
+                        put("additionalProperties", false)
+                    },
+                ),
+            )
+            add(
+                functionTool(
+                    name = CREATE_ALARM_STACKS,
+                    description = "Propose creating a stack of related plain alarms that share " +
+                        "one name, note, tags and oneTime setting but ring at different times. " +
+                        "Use this when the user asks for several alarms together, for example " +
+                        "7:00, 7:10 and 7:20; they appear as one expandable stack. Each stack " +
+                        "needs at least two different HH:mm times and cannot have a date. Use " +
+                        "create_alarms for independent alarms. The user must confirm the preview.",
+                    parameters = buildJsonObject {
+                        put("type", "object")
+                        putJsonObject("properties") {
+                            putJsonObject("stacks") {
+                                put("type", "array")
+                                put("description", "All alarm stacks to create, up to 30")
+                                putJsonObject("items") {
+                                    put("type", "object")
+                                    putJsonObject("properties") {
+                                        putJsonObject("times") {
+                                            put("type", "array")
+                                            put(
+                                                "description",
+                                                "At least two different local times HH:mm",
+                                            )
+                                            putJsonObject("items") { put("type", "string") }
+                                        }
+                                        putJsonObject("name") { put("type", "string") }
+                                        putJsonObject("note") { put("type", "string") }
+                                        putJsonObject("enabled") {
+                                            put("type", "boolean")
+                                            put(
+                                                "description",
+                                                "Defaults to true; false creates disabled alarms",
+                                            )
+                                        }
+                                        putJsonObject("oneTime") {
+                                            put("type", "boolean")
+                                            put(
+                                                "description",
+                                                "Delete each alarm after it rings; default false",
+                                            )
+                                        }
+                                        putJsonObject("tags") {
+                                            put("type", "array")
+                                            put("description", "Existing tag names only")
+                                            putJsonObject("items") { put("type", "string") }
+                                        }
+                                    }
+                                    putJsonArray("required") { add("times") }
+                                    put("additionalProperties", false)
+                                }
+                            }
+                        }
+                        putJsonArray("required") { add("stacks") }
                         put("additionalProperties", false)
                     },
                 ),

@@ -30,6 +30,9 @@ data class Alarm(
     val snoozedUntil: Long? = null,
     // Deletes the alarm row after it finishes ringing, instead of only switching it off.
     @ColumnInfo(defaultValue = "0") val oneTime: Boolean = false,
+    // Random group id shared by alarms created together as one manual stack; null for
+    // standalone and event-linked alarms.
+    val stackId: Long? = null,
 ) {
     // Plain alarms ring at the next occurrence of time (today, or tomorrow when it already
     // passed). Dated alarms return that date, even when it is in the past.

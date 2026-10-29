@@ -57,6 +57,16 @@
     <string name="alarm_expand_style_drawer_hint">卡片向下滑出</string>
     <string name="alarm_expand_style_fade_hint">卡片淡入並位移</string>
     <string name="add_alarm">新增鬧鐘</string>
+    <string name="add_alarm_single">單一鬧鐘</string>
+    <string name="add_alarm_stack">多鬧鐘</string>
+    <string name="add_alarm_stack_title">新增多鬧鐘</string>
+    <string name="alarm_stack_times_helper">建立多個不同時間的鬧鐘，會在鬧鐘列表中堆疊顯示。</string>
+    <string name="alarm_stack_time_number">時間 %1$d</string>
+    <string name="alarm_stack_add_time">新增時間</string>
+    <string name="alarm_stack_remove_time">移除時間</string>
+    <string name="alarm_stack_min_times">至少需要兩個時間</string>
+    <string name="alarm_stack_duplicate_time">每個時間需不同</string>
+    <string name="alarm_stack_saved">已建立 %1$d 個鬧鐘</string>
     <string name="save">儲存</string>
     <string name="alarm_time_label">時間</string>
     <string name="alarm_name_label">名稱</string>
@@ -243,6 +253,7 @@
 
     <string name="ai_proposal_title">準備套用變更</string>
     <string name="ai_proposal_alarms">鬧鐘（%1$d）</string>
+    <string name="ai_proposal_alarm_stacks">多鬧鐘（%1$d）</string>
     <string name="ai_proposal_events">活動（%1$d）</string>
     <string name="ai_proposal_event_occurrences">共 %1$d 個活動</string>
     <string name="ai_proposal_alarm_at_start">開始時響鈴</string>
@@ -408,6 +419,19 @@
     <string name="ai_proposal_scope_this">此活動</string>
     <string name="ai_proposal_scope_subsequent">此活動與後續</string>
     <string name="ai_proposal_scope_series">整個系列</string>
+    <string name="ai_proposal_edit">編輯</string>
+    <string name="ai_edit_alarm_title">編輯鬧鐘</string>
+    <string name="ai_edit_stack_title">編輯多鬧鐘</string>
+    <string name="ai_edit_event_title">編輯活動</string>
+    <string name="ai_edit_confirm">確定並建立</string>
+    <string name="ai_edit_date_none">未指定日期</string>
+    <string name="ai_edit_clear_date">清除日期</string>
+    <string name="ai_edit_alarm_in_past">時間需在未來</string>
+    <string name="ai_edit_title_required">請輸入活動名稱</string>
+    <string name="ai_edit_repeat_weekday_missing">每週重複需包含活動當天所在的星期</string>
+    <string name="ai_edit_stack_times_invalid">需要至少兩個不重複的時間</string>
+    <string name="ai_edit_add_time">新增時間</string>
+    <string name="ai_edit_remove_time">移除時間</string>
     <string name="ai_usage_cache_rate">快取命中率：%1$s</string>
     <string name="ai_usage_cache_unknown">—</string>
     <string name="ai_usage_cache_hint">快取命中率越高，重複送出的輸入 token 成本越低。</string>

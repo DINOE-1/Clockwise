@@ -81,6 +81,7 @@ import com.dinoe.clockwise.R
 import com.dinoe.clockwise.ai.AiChatItem
 import com.dinoe.clockwise.ai.AlarmDeleteDraft
 import com.dinoe.clockwise.ai.AlarmDraft
+import com.dinoe.clockwise.ai.AlarmStackDraft
 import com.dinoe.clockwise.ai.AlarmUpdateDraft
 import com.dinoe.clockwise.ai.EventDeleteDraft
 import com.dinoe.clockwise.ai.EventDraft
@@ -90,6 +91,7 @@ import com.dinoe.clockwise.data.AI_CHAT_SESSION_DEFAULT_TITLE
 import com.dinoe.clockwise.data.AiChatSessionSummary
 import com.dinoe.clockwise.data.Event
 import com.dinoe.clockwise.data.EventScope
+import com.dinoe.clockwise.data.Tag
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
@@ -110,6 +112,8 @@ fun AiScreen(
     var showNewChat by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
+    val allTags by viewModel.allTags.collectAsStateWithLifecycle()
+    val timePickerStyle by viewModel.timePickerStyle.collectAsStateWithLifecycle()
     val active = viewModel.config?.active()
     val subtitle = if (active?.hasKey == true) {
         stringResource(
@@ -277,8 +281,13 @@ fun AiScreen(
                             is AiChatItem.Proposal -> ProposalCard(
                                 item = item,
                                 busy = viewModel.isBusy && item.state == ProposalState.PENDING,
+                                allTags = allTags,
+                                timePickerStyle = timePickerStyle,
                                 onConfirm = viewModel::confirmProposal,
                                 onCancel = viewModel::cancelProposal,
+                                onUpdateAlarm = viewModel::updateAlarmDraft,
+                                onUpdateAlarmStack = viewModel::updateAlarmStackDraft,
+                                onUpdateEvent = viewModel::updateEventDraft,
                             )
                         }
                     }
@@ -568,10 +577,19 @@ private fun BusyRow(status: String?) {
 private fun ProposalCard(
     item: AiChatItem.Proposal,
     busy: Boolean,
+    allTags: List<Tag>,
+    timePickerStyle: TimePickerStyle,
     onConfirm: () -> Unit,
     onCancel: () -> Unit,
+    onUpdateAlarm: (Int, AlarmDraft) -> Unit,
+    onUpdateAlarmStack: (Int, AlarmStackDraft) -> Unit,
+    onUpdateEvent: (Int, EventDraft) -> Unit,
 ) {
-    val createCount = item.alarms.size + item.events.size
+    var editAlarmIndex by remember(item.id) { mutableStateOf<Int?>(null) }
+    var editAlarmStackIndex by remember(item.id) { mutableStateOf<Int?>(null) }
+    var editEventIndex by remember(item.id) { mutableStateOf<Int?>(null) }
+    val editable = item.state == ProposalState.PENDING && !busy
+    val createCount = item.alarms.size + item.alarmStacks.size + item.events.size
     val updateCount = item.alarmUpdates.size + item.eventUpdates.size
     val deleteCount = item.alarmDeletes.size + item.eventDeletes.size
     val summary = listOfNotNull(
@@ -634,7 +652,30 @@ private fun ProposalCard(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                item.alarms.forEach { alarm -> AlarmDraftRow(alarm) }
+                item.alarms.forEachIndexed { index, alarm ->
+                    AlarmDraftRow(
+                        alarm = alarm,
+                        onEdit = if (editable) ({ editAlarmIndex = index }) else null,
+                    )
+                }
+            }
+
+            if (item.alarmStacks.isNotEmpty()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text(
+                    text = stringResource(
+                        R.string.ai_proposal_alarm_stacks,
+                        item.alarmStacks.size,
+                    ),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                item.alarmStacks.forEachIndexed { index, stack ->
+                    AlarmStackDraftRow(
+                        stack = stack,
+                        onEdit = if (editable) ({ editAlarmStackIndex = index }) else null,
+                    )
+                }
             }
 
             if (item.events.isNotEmpty()) {
@@ -644,7 +685,12 @@ private fun ProposalCard(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                item.events.forEach { event -> EventDraftRow(event) }
+                item.events.forEachIndexed { index, event ->
+                    EventDraftRow(
+                        event = event,
+                        onEdit = if (editable) ({ editEventIndex = index }) else null,
+                    )
+                }
             }
 
             if (item.alarmUpdates.isNotEmpty()) {
@@ -711,6 +757,52 @@ private fun ProposalCard(
             }
         }
     }
+
+    editAlarmIndex?.let { index ->
+        item.alarms.getOrNull(index)?.let { draft ->
+            AlarmDraftEditDialog(
+                draft = draft,
+                allTags = allTags,
+                timePickerStyle = timePickerStyle,
+                onDismiss = { editAlarmIndex = null },
+                onSave = { updated ->
+                    editAlarmIndex = null
+                    onUpdateAlarm(index, updated)
+                    onConfirm()
+                },
+            )
+        }
+    }
+    editAlarmStackIndex?.let { index ->
+        item.alarmStacks.getOrNull(index)?.let { draft ->
+            AlarmStackDraftEditDialog(
+                draft = draft,
+                allTags = allTags,
+                timePickerStyle = timePickerStyle,
+                onDismiss = { editAlarmStackIndex = null },
+                onSave = { updated ->
+                    editAlarmStackIndex = null
+                    onUpdateAlarmStack(index, updated)
+                    onConfirm()
+                },
+            )
+        }
+    }
+    editEventIndex?.let { index ->
+        item.events.getOrNull(index)?.let { draft ->
+            EventDraftEditDialog(
+                draft = draft,
+                allTags = allTags,
+                timePickerStyle = timePickerStyle,
+                onDismiss = { editEventIndex = null },
+                onSave = { updated ->
+                    editEventIndex = null
+                    onUpdateEvent(index, updated)
+                    onConfirm()
+                },
+            )
+        }
+    }
 }
 
 @Composable
@@ -724,7 +816,7 @@ private fun ProposalStateLabel(text: String, color: Color) {
 }
 
 @Composable
-private fun AlarmDraftRow(alarm: AlarmDraft) {
+private fun AlarmDraftRow(alarm: AlarmDraft, onEdit: (() -> Unit)? = null) {
     val time = formatTime(alarm.time)
     val whenText = if (alarm.date == null) {
         stringResource(R.string.ai_format_next_time, time)
@@ -779,11 +871,70 @@ private fun AlarmDraftRow(alarm: AlarmDraft) {
                 )
             }
         }
+        DraftEditButton(onEdit)
     }
 }
 
 @Composable
-private fun EventDraftRow(event: EventDraft) {
+private fun AlarmStackDraftRow(stack: AlarmStackDraft, onEdit: (() -> Unit)? = null) {
+    val clockFormatter = rememberClockFormatter()
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.AutoMirrored.Filled.List,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stack.times.joinToString(" · ") { clockFormatter.format(it) },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = stack.name.ifBlank {
+                    stringResource(R.string.ai_proposal_alarm_name_fallback)
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            val details = listOfNotNull(
+                stringResource(R.string.alarm_stack_count, stack.times.size),
+                if (!stack.enabled) stringResource(R.string.ai_proposal_disabled) else null,
+                if (stack.oneTime) stringResource(R.string.alarm_one_time_badge) else null,
+            )
+            Text(
+                text = details.joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (stack.note.isNotBlank()) {
+                Text(
+                    text = stack.note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (stack.tags.isNotEmpty()) {
+                Text(
+                    text = stringResource(
+                        R.string.ai_proposal_tags,
+                        stack.tags.joinToString("、") { it.name },
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        DraftEditButton(onEdit)
+    }
+}
+
+@Composable
+private fun EventDraftRow(event: EventDraft, onEdit: (() -> Unit)? = null) {
     val locale = rememberLocale()
     val dateText = formatDate(event.date)
     val timeRange = "${formatTime(event.start)}–${formatTime(event.end)}"
@@ -861,6 +1012,19 @@ private fun EventDraftRow(event: EventDraft) {
                 )
             }
         }
+        DraftEditButton(onEdit)
+    }
+}
+
+@Composable
+private fun DraftEditButton(onEdit: (() -> Unit)?) {
+    if (onEdit == null) return
+    IconButton(onClick = onEdit) {
+        Icon(
+            Icons.Filled.Edit,
+            contentDescription = stringResource(R.string.ai_proposal_edit),
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 

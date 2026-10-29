@@ -80,12 +80,13 @@ class OpenAiChatClientTest {
         )
         assertEquals("low", body["reasoning_effort"]!!.jsonPrimitive.content)
         val tools = body["tools"]!!.jsonArray
-        assertEquals(8, tools.size)
+        assertEquals(9, tools.size)
         assertEquals(
             setOf(
                 AiTools.LIST_ALARMS,
                 AiTools.LIST_EVENTS,
                 AiTools.CREATE_ALARMS,
+                AiTools.CREATE_ALARM_STACKS,
                 AiTools.CREATE_EVENTS,
                 AiTools.UPDATE_ALARMS,
                 AiTools.DELETE_ALARMS,

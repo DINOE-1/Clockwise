@@ -17,6 +17,7 @@ class AiToolsTest {
                 AiTools.LIST_ALARMS,
                 AiTools.LIST_EVENTS,
                 AiTools.CREATE_ALARMS,
+                AiTools.CREATE_ALARM_STACKS,
                 AiTools.CREATE_EVENTS,
                 AiTools.UPDATE_ALARMS,
                 AiTools.DELETE_ALARMS,
@@ -25,7 +26,7 @@ class AiToolsTest {
             ),
             names.toSet(),
         )
-        assertEquals(8, names.size)
+        assertEquals(9, names.size)
     }
 
     @Test
@@ -44,6 +45,7 @@ class AiToolsTest {
         assertEquals(
             setOf(
                 AiTools.CREATE_ALARMS,
+                AiTools.CREATE_ALARM_STACKS,
                 AiTools.CREATE_EVENTS,
                 AiTools.UPDATE_ALARMS,
                 AiTools.DELETE_ALARMS,

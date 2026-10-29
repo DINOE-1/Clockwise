@@ -11,6 +11,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -32,13 +34,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -190,6 +196,8 @@ fun AlarmScreen(
     }
 
     var showAddDialog by remember { mutableStateOf(false) }
+    var showAddStackDialog by remember { mutableStateOf(false) }
+    var addMenuExpanded by remember { mutableStateOf(false) }
     var alarmToDelete by remember { mutableStateOf<Alarm?>(null) }
     var alarmToEdit by remember { mutableStateOf<Alarm?>(null) }
     var alarmToView by remember { mutableStateOf<Alarm?>(null) }
@@ -197,15 +205,7 @@ fun AlarmScreen(
     // Save confirmations appear as a Snackbar so they dismiss themselves after a moment.
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val showSavedNotice: (Boolean, RingCountdown?) -> Unit = { enabled, countdown ->
-        val message = if (enabled && countdown != null) {
-            resources.getString(
-                R.string.alarm_saved_ring_in,
-                formatRingCountdown(resources, countdown),
-            )
-        } else {
-            resources.getString(R.string.alarm_saved_disabled)
-        }
+    val showNotice: (String) -> Unit = { message ->
         scope.launch {
             snackbarHostState.currentSnackbarData?.dismiss()
             val result = withTimeoutOrNull(SAVED_NOTICE_MILLIS) {
@@ -218,6 +218,17 @@ fun AlarmScreen(
                 snackbarHostState.currentSnackbarData?.dismiss()
             }
         }
+    }
+    val showSavedNotice: (Boolean, RingCountdown?) -> Unit = { enabled, countdown ->
+        val message = if (enabled && countdown != null) {
+            resources.getString(
+                R.string.alarm_saved_ring_in,
+                formatRingCountdown(resources, countdown),
+            )
+        } else {
+            resources.getString(R.string.alarm_saved_disabled)
+        }
+        showNotice(message)
     }
 
     LaunchedEffect(errorMessage) {
@@ -278,12 +289,71 @@ fun AlarmScreen(
         }
     }
 
+    val addMenuRotation by animateFloatAsState(
+        targetValue = if (addMenuExpanded) 45f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "addMenuRotation",
+    )
+
     Scaffold(
         topBar = { AlarmTopBar() },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showAddDialog = true }) {
-                Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_alarm))
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                AnimatedVisibility(
+                    visible = addMenuExpanded,
+                    enter = expandVertically(
+                        expandFrom = Alignment.Bottom,
+                        animationSpec = tween(durationMillis = 180),
+                    ) + fadeIn(tween(durationMillis = 180)),
+                    exit = shrinkVertically(
+                        shrinkTowards = Alignment.Bottom,
+                        animationSpec = tween(durationMillis = 140),
+                    ) + fadeOut(tween(durationMillis = 140)),
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                addMenuExpanded = false
+                                showAddStackDialog = true
+                            },
+                            icon = {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.List,
+                                    contentDescription = null,
+                                )
+                            },
+                            text = { Text(stringResource(R.string.add_alarm_stack)) },
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                addMenuExpanded = false
+                                showAddDialog = true
+                            },
+                            icon = {
+                                Icon(Icons.Filled.Notifications, contentDescription = null)
+                            },
+                            text = { Text(stringResource(R.string.add_alarm_single)) },
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+                FloatingActionButton(onClick = { addMenuExpanded = !addMenuExpanded }) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = stringResource(R.string.add_alarm),
+                        modifier = Modifier.rotate(addMenuRotation),
+                    )
+                }
             }
         },
     ) { innerPadding ->
@@ -414,6 +484,22 @@ fun AlarmScreen(
                 viewModel.addAlarm(seconds, name, note, oneTime, tags)
                 showAddDialog = false
                 showSavedNotice(true, ringCountdown(Alarm(time = seconds)))
+                if (!permissionStatus.notificationsGranted) {
+                    requestNotifications()
+                }
+            },
+        )
+    }
+
+    if (showAddStackDialog) {
+        AddAlarmStackDialog(
+            allTags = allTags,
+            timePickerStyle = timePickerStyle,
+            onDismiss = { showAddStackDialog = false },
+            onSave = { times, name, note, oneTime, tags ->
+                viewModel.addAlarmStack(times, name, note, oneTime, tags)
+                showAddStackDialog = false
+                showNotice(resources.getString(R.string.alarm_stack_saved, times.size))
                 if (!permissionStatus.notificationsGranted) {
                     requestNotifications()
                 }
@@ -900,6 +986,162 @@ private fun AddAlarmDialog(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddAlarmStackDialog(
+    allTags: List<Tag>,
+    timePickerStyle: TimePickerStyle,
+    onDismiss: () -> Unit,
+    onSave: (List<Int>, String, String, Boolean, List<Tag>) -> Unit,
+) {
+    var times by rememberSaveable { mutableStateOf(listOf(defaultAlarmTime())) }
+    var name by rememberSaveable { mutableStateOf("") }
+    var note by rememberSaveable { mutableStateOf("") }
+    var oneTime by rememberSaveable { mutableStateOf(false) }
+    var selectedTagIds by rememberSaveable { mutableStateOf(longArrayOf()) }
+    var timePickerIndex by remember { mutableStateOf<Int?>(null) }
+
+    val selectedTags = allTags.filter { it.id in selectedTagIds }
+    val onTagToggle: (Tag) -> Unit = { tag ->
+        selectedTagIds = when {
+            tag.id in selectedTagIds -> selectedTagIds.filter { it != tag.id }.toLongArray()
+            selectedTagIds.size < MAX_TAGS_PER_ITEM -> selectedTagIds + tag.id
+            else -> selectedTagIds
+        }
+    }
+    val hasDuplicateTimes = times.distinct().size != times.size
+    val canSave = times.size >= 2 && !hasDuplicateTimes
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.add_alarm_stack_title),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                Text(
+                    text = stringResource(R.string.alarm_stack_times_helper),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                times.forEachIndexed { index, seconds ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TimeSlotButton(
+                            label = stringResource(R.string.alarm_stack_time_number, index + 1),
+                            secondsOfDay = seconds,
+                            onClick = { timePickerIndex = index },
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(
+                            onClick = {
+                                times = times.filterIndexed { timeIndex, _ ->
+                                    timeIndex != index
+                                }
+                            },
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(
+                                    R.string.alarm_stack_remove_time,
+                                ),
+                            )
+                        }
+                    }
+                }
+                OutlinedButton(
+                    onClick = { times = times + nextStackTime(times) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null)
+                    Text(
+                        text = stringResource(R.string.alarm_stack_add_time),
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+                if (times.size < 2) {
+                    Text(
+                        text = stringResource(R.string.alarm_stack_min_times),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else if (hasDuplicateTimes) {
+                    Text(
+                        text = stringResource(R.string.alarm_stack_duplicate_time),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.alarm_name_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text(stringResource(R.string.alarm_note_label)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OneTimeAlarmToggle(
+                    checked = oneTime,
+                    onCheckedChange = { oneTime = it },
+                )
+                TagPicker(
+                    allTags = allTags,
+                    selectedTags = selectedTags,
+                    onToggle = onTagToggle,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                    TextButton(
+                        enabled = canSave,
+                        onClick = {
+                            onSave(
+                                times,
+                                name.trim(),
+                                note.trim(),
+                                oneTime,
+                                selectedTags,
+                            )
+                        },
+                    ) {
+                        Text(stringResource(R.string.save))
+                    }
+                }
+            }
+        }
+    }
+
+    timePickerIndex?.let { index ->
+        TimePickerDialog(
+            initialSecondsOfDay = times.getOrElse(index) { defaultAlarmTime() },
+            style = timePickerStyle,
+            onDismiss = { timePickerIndex = null },
+            onConfirm = { picked ->
+                if (index in times.indices) {
+                    times = times.toMutableList().also { it[index] = picked }
+                }
+                timePickerIndex = null
+            },
+        )
+    }
+}
+
 @Composable
 private fun EditAlarmDialog(
     alarm: Alarm,
@@ -1060,4 +1302,19 @@ private fun defaultAlarmTime(): Int {
     val now = LocalTime.now()
     val minutes = ((now.minute / 5) + 1) * 5
     return now.withSecond(0).withNano(0).withMinute(0).plusMinutes(minutes.toLong()).toSecondOfDay()
+}
+
+private const val STACK_TIME_STEP_SECONDS = 5 * 60
+private const val SECONDS_PER_DAY = 24 * 60 * 60
+
+// Next suggested stack slot: five minutes after the latest time, skipping times already used.
+private fun nextStackTime(times: List<Int>): Int {
+    val latest = times.maxOrNull() ?: defaultAlarmTime()
+    var candidate = (latest + STACK_TIME_STEP_SECONDS) % SECONDS_PER_DAY
+    var attempts = 0
+    while (candidate in times && attempts < SECONDS_PER_DAY / STACK_TIME_STEP_SECONDS) {
+        candidate = (candidate + STACK_TIME_STEP_SECONDS) % SECONDS_PER_DAY
+        attempts++
+    }
+    return candidate
 }

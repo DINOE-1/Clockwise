@@ -40,6 +40,7 @@ sealed interface AiChatItem {
     data class Proposal(
         override val id: Long,
         val alarms: List<AlarmDraft> = emptyList(),
+        val alarmStacks: List<AlarmStackDraft> = emptyList(),
         val events: List<EventDraft> = emptyList(),
         val alarmUpdates: List<AlarmUpdateDraft> = emptyList(),
         val alarmDeletes: List<AlarmDeleteDraft> = emptyList(),

@@ -124,6 +124,24 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun addAlarmStack(
+        times: List<Int>,
+        name: String,
+        note: String,
+        oneTime: Boolean,
+        tags: List<Tag>,
+    ) {
+        launchWrite {
+            writer.addAlarmStack(
+                times = times,
+                name = name,
+                note = note,
+                oneTime = oneTime,
+                tags = tags,
+            )
+        }
+    }
+
     fun updateAlarmDetails(
         alarm: Alarm,
         time: Int,

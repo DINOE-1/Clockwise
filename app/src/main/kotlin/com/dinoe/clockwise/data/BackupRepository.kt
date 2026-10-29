@@ -85,6 +85,7 @@ class BackupRepository(context: Context) {
                             put("note", alarm.note)
                             put("oneTime", alarm.oneTime)
                             alarm.snoozedUntil?.let { put("snoozedUntil", it) }
+                            alarm.stackId?.let { put("stackId", it) }
                         },
                     )
                 }
@@ -235,6 +236,7 @@ class BackupRepository(context: Context) {
                         note = row.note,
                         snoozedUntil = null,
                         oneTime = row.oneTime,
+                        stackId = row.stackId,
                     ),
                 )
                 alarmIdMap[row.id] = newId
@@ -331,6 +333,7 @@ class BackupRepository(context: Context) {
             name = obj.optionalString("name").orEmpty(),
             note = obj.optionalString("note").orEmpty(),
             oneTime = obj.optionalBoolean("oneTime") ?: false,
+            stackId = obj.optionalLong("stackId"),
         )
     }
 
@@ -412,6 +415,7 @@ class BackupRepository(context: Context) {
         val name: String,
         val note: String,
         val oneTime: Boolean,
+        val stackId: Long?,
     )
 
     private data class BackupTag(val id: Long, val name: String, val color: Int)
