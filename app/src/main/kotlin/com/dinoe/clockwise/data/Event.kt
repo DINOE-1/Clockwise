@@ -31,6 +31,9 @@ data class Event(
 ) {
     val isRecurring: Boolean get() = repeatType != REPEAT_NONE
 
+    // An event with end == start has no duration; the UI shows only its start time.
+    val hasEndTime: Boolean get() = end > start
+
     fun reminderTriggerMillis(zone: ZoneId = ZoneId.systemDefault()): Long? {
         if (reminderMinutes !in REMINDER_MINUTE_OPTIONS) return null
         return LocalDate.ofEpochDay(date)

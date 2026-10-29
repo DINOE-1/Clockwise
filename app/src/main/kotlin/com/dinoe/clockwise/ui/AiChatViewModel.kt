@@ -974,7 +974,9 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             put("id", event.id)
                             put("date", LocalDate.ofEpochDay(event.date).toString())
                             put("start", formatSeconds(event.start))
-                            put("end", formatSeconds(event.end))
+                            if (event.hasEndTime) {
+                                put("end", formatSeconds(event.end))
+                            }
                             put("title", AiTokenBudget.truncateChars(event.title, 80))
                             if (event.note.isNotBlank()) {
                                 put("note", AiTokenBudget.truncateChars(event.note, 120))

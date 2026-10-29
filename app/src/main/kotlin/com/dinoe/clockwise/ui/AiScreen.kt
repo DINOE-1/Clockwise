@@ -937,7 +937,11 @@ private fun AlarmStackDraftRow(stack: AlarmStackDraft, onEdit: (() -> Unit)? = n
 private fun EventDraftRow(event: EventDraft, onEdit: (() -> Unit)? = null) {
     val locale = rememberLocale()
     val dateText = formatDate(event.date)
-    val timeRange = "${formatTime(event.start)}–${formatTime(event.end)}"
+    val timeRange = if (event.end.isAfter(event.start)) {
+        "${formatTime(event.start)}–${formatTime(event.end)}"
+    } else {
+        formatTime(event.start)
+    }
     val weekdayText = event.repeatDays.sorted().joinToString(", ") {
         weekdayLabel(it, locale)
     }
@@ -1153,10 +1157,18 @@ private fun AlarmDeleteRow(delete: AlarmDeleteDraft) {
 
 @Composable
 private fun EventUpdateRow(update: EventUpdateDraft) {
-    val before = "${formatDate(update.previousDate)} " +
+    val before = "${formatDate(update.previousDate)} " + if (
+        update.previousEnd.isAfter(update.previousStart)
+    ) {
         "${formatTime(update.previousStart)}–${formatTime(update.previousEnd)}"
-    val after = "${formatDate(update.date)} " +
+    } else {
+        formatTime(update.previousStart)
+    }
+    val after = "${formatDate(update.date)} " + if (update.end.isAfter(update.start)) {
         "${formatTime(update.start)}–${formatTime(update.end)}"
+    } else {
+        formatTime(update.start)
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),

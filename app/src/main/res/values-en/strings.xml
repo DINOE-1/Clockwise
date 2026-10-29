@@ -28,6 +28,8 @@
     <string name="reminder_notification_advance">%1$d min before</string>
     <string name="start_time_label">Start time</string>
     <string name="end_time_label">End time</string>
+    <string name="event_has_end_time">Set an end time</string>
+    <string name="event_no_end_time_helper">Turn off to keep only a start time, for quick actions such as taking medicine or drinking water.</string>
     <string name="select_time">Select time</string>
     <string name="invalid_time_range">End time must be after start time.</string>
     <string name="empty_day">No events on this day</string>

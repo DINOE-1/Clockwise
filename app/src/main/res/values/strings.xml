@@ -28,6 +28,8 @@
     <string name="reminder_notification_advance">提前 %1$d 分鐘</string>
     <string name="start_time_label">開始時間</string>
     <string name="end_time_label">結束時間</string>
+    <string name="event_has_end_time">設定結束時間</string>
+    <string name="event_no_end_time_helper">關閉後只保留開始時間，適合吃藥、喝水等短暫活動。</string>
     <string name="select_time">選擇時間</string>
     <string name="invalid_time_range">結束時間需晚於開始時間</string>
     <string name="empty_day">這一天沒有活動</string>

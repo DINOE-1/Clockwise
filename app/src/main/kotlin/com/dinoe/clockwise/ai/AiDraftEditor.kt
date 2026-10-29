@@ -41,7 +41,7 @@ object AiDraftEditor {
 
     fun eventIssue(draft: EventDraft, now: LocalDateTime): AiDraftIssue? {
         if (draft.title.isBlank()) return AiDraftIssue.TITLE_REQUIRED
-        if (!draft.end.isAfter(draft.start)) return AiDraftIssue.INVALID_TIME_RANGE
+        if (draft.end.isBefore(draft.start)) return AiDraftIssue.INVALID_TIME_RANGE
         if (draft.withAlarm && !draft.date.atTime(draft.start).isAfter(now)) {
             return AiDraftIssue.ALARM_IN_PAST
         }

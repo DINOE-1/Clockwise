@@ -30,7 +30,9 @@ object AiPrompt {
         Defaults: apply these silently and never ask about them
         - enabled=true, oneTime=false, tags=[] (only existing tags the user named), note="" unless
           there is real detail.
-        - Event end: use the stated duration; otherwise start + 60 minutes (90 for a class or exam).
+        - Event end: use the stated duration. For a quick action with no duration (吃藥, 喝水,
+          拿包裹), omit end so the event has only a start time. Otherwise start + 60 minutes
+          (90 for a class or exam).
         - Event date: if only a weekday/time is given, use the next matching date; if only a time is
           given, use today when it is still ahead, otherwise tomorrow.
         - Alarm without a date rings at the next occurrence of its time; add a date only when a day

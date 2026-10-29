@@ -177,6 +177,15 @@ class AiToolParserTest {
     }
 
     @Test
+    fun parsesEventWithoutEndTime() {
+        val events = parser.parseEvents(
+            """{"events":[{"title":"吃藥","date":"2026-10-25","start":"14:00"}]}""",
+        )
+        val event = events.single()
+        assertEquals(event.start, event.end)
+    }
+
+    @Test
     fun parsesDailyRepeatInclusiveUntil() {
         val events = parser.parseEvents(
             """

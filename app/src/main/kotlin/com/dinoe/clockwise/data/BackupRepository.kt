@@ -287,7 +287,7 @@ class BackupRepository(context: Context) {
         }
         val start = obj.requireInt("start", "event $id")
         val end = obj.requireInt("end", "event $id")
-        if (start !in 0..86_399 || end !in 0..86_399 || start >= end) {
+        if (start !in 0..86_399 || end !in 0..86_399 || start > end) {
             throw BackupException("Event $id has an invalid time range")
         }
         val repeatType = obj.optionalInt("repeatType") ?: Event.REPEAT_NONE

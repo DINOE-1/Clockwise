@@ -193,7 +193,8 @@ object AiTools {
                     description = "Propose creating calendar events. Recurrence none/daily/weekly; " +
                         "daily and weekly require until. withAlarm creates an alarm at each start. " +
                         "reminderMinutes 5/10/30 shows a notification before each occurrence; 0 " +
-                        "or omitted disables it.",
+                        "or omitted disables it. Omit end for a quick activity that only needs a " +
+                        "start time.",
                     parameters = buildJsonObject {
                         put("type", "object")
                         putJsonObject("properties") {
@@ -207,7 +208,13 @@ object AiTools {
                                         putJsonObject("note") { put("type", "string") }
                                         putJsonObject("date") { put("type", "string") }
                                         putJsonObject("start") { put("type", "string") }
-                                        putJsonObject("end") { put("type", "string") }
+                                        putJsonObject("end") {
+                                            put("type", "string")
+                                            put(
+                                                "description",
+                                                "HH:mm; omit for an event with only a start time",
+                                            )
+                                        }
                                         putJsonObject("withAlarm") { put("type", "boolean") }
                                         putJsonObject("reminderMinutes") {
                                             put("type", "integer")
@@ -257,7 +264,6 @@ object AiTools {
                                         add("title")
                                         add("date")
                                         add("start")
-                                        add("end")
                                     }
                                     put("additionalProperties", false)
                                 }
@@ -375,7 +381,10 @@ object AiTools {
                                         }
                                         putJsonObject("end") {
                                             put("type", "string")
-                                            put("description", "HH:mm")
+                                            put(
+                                                "description",
+                                                "HH:mm; equal to start removes the end time",
+                                            )
                                         }
                                         putJsonObject("withAlarm") { put("type", "boolean") }
                                         putJsonObject("reminderMinutes") {

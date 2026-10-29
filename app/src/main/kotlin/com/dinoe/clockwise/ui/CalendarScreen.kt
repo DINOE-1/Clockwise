@@ -724,6 +724,7 @@ private val TimelineLabelWidth = 56.dp
 private const val TimelineEndOfDaySeconds = 86_340
 private const val MinEventDurationSeconds = 300
 private const val DefaultDraftDurationSeconds = 3_600
+private const val MinLaneDurationSeconds = 60
 
 private data class TimelineEventSlot(val event: Event, val lane: Int, val laneCount: Int)
 
@@ -800,16 +801,19 @@ private fun layoutTimelineEvents(events: List<Event>): List<TimelineEventSlot> {
     }
 
     for (event in sorted) {
+        // An event without an end time is zero-length; give it a lane so simultaneous entries
+        // are still shown side by side instead of stacking on top of each other.
+        val laneEnd = maxOf(event.end, event.start + MinLaneDurationSeconds)
         if (cluster.isNotEmpty() && event.start >= clusterEnd) flushCluster()
         val lane = laneEnds.indexOfFirst { it <= event.start }
         if (lane == -1) {
-            laneEnds += event.end
+            laneEnds += laneEnd
             cluster += event to (laneEnds.size - 1)
         } else {
-            laneEnds[lane] = event.end
+            laneEnds[lane] = laneEnd
             cluster += event to lane
         }
-        clusterEnd = maxOf(clusterEnd, event.end)
+        clusterEnd = maxOf(clusterEnd, laneEnd)
     }
     if (cluster.isNotEmpty()) flushCluster()
     return result
@@ -1311,8 +1315,12 @@ private fun EventRow(
                     .padding(16.dp),
             ) {
                 Text(
-                    text = "${clockFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))} – " +
-                        clockFormatter.format(LocalTime.ofSecondOfDay(event.end.toLong())),
+                    text = if (event.hasEndTime) {
+                        "${clockFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))} – " +
+                            clockFormatter.format(LocalTime.ofSecondOfDay(event.end.toLong()))
+                    } else {
+                        clockFormatter.format(LocalTime.ofSecondOfDay(event.start.toLong()))
+                    },
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -1381,6 +1389,7 @@ private fun AddEventDialog(
     var endSeconds by rememberSaveable {
         mutableIntStateOf(initialEndSeconds ?: defaultEnd)
     }
+    var hasEndTime by rememberSaveable { mutableStateOf(true) }
     var withAlarm by rememberSaveable { mutableStateOf(false) }
     var reminderMinutes by rememberSaveable { mutableIntStateOf(Event.REMINDER_OFF) }
     var selectedTagIds by rememberSaveable { mutableStateOf(longArrayOf()) }
@@ -1457,6 +1466,23 @@ private fun AddEventDialog(
                     selectedTags = selectedTags,
                     onToggle = onTagToggle,
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.event_has_end_time),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(checked = hasEndTime, onCheckedChange = { hasEndTime = it })
+                }
+                if (!hasEndTime) {
+                    Text(
+                        text = stringResource(R.string.event_no_end_time_helper),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = stringResource(R.string.repeat_rule_label),
@@ -1574,11 +1600,16 @@ private fun AddEventDialog(
                     }
                     TextButton(
                         onClick = {
+                            val startTime = LocalTime.ofSecondOfDay(startSeconds.toLong())
                             onSave(
                                 title.trim(),
                                 note.trim(),
-                                LocalTime.ofSecondOfDay(startSeconds.toLong()),
-                                LocalTime.ofSecondOfDay(endSeconds.toLong()),
+                                startTime,
+                                if (hasEndTime) {
+                                    LocalTime.ofSecondOfDay(endSeconds.toLong())
+                                } else {
+                                    startTime
+                                },
                                 withAlarm,
                                 reminderMinutes,
                                 selectedTags,
@@ -1649,6 +1680,7 @@ private fun EditEventDialog(
     var dateEpochDay by rememberSaveable(event.id) { mutableLongStateOf(event.date) }
     var startSeconds by rememberSaveable(event.id) { mutableIntStateOf(event.start) }
     var endSeconds by rememberSaveable(event.id) { mutableIntStateOf(event.end) }
+    var hasEndTime by rememberSaveable(event.id) { mutableStateOf(event.hasEndTime) }
     var withAlarm by rememberSaveable(event.id) { mutableStateOf(initialWithAlarm) }
     var reminderMinutes by rememberSaveable(event.id) {
         mutableIntStateOf(event.reminderMinutes)
@@ -1671,7 +1703,7 @@ private fun EditEventDialog(
             else -> selectedTagIds
         }
     }
-    val isValid = title.isNotBlank() && endSeconds > startSeconds
+    val isValid = title.isNotBlank() && (!hasEndTime || endSeconds > startSeconds)
     val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1724,10 +1756,28 @@ private fun EditEventDialog(
                         label = stringResource(R.string.end_time_label),
                         secondsOfDay = endSeconds,
                         onClick = { timeField = TimeField.END },
+                        enabled = hasEndTime,
                         modifier = Modifier.weight(1f),
                     )
                 }
-                if (endSeconds <= startSeconds) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.event_has_end_time),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(checked = hasEndTime, onCheckedChange = { hasEndTime = it })
+                }
+                if (!hasEndTime) {
+                    Text(
+                        text = stringResource(R.string.event_no_end_time_helper),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (hasEndTime && endSeconds <= startSeconds) {
                     Text(
                         text = stringResource(R.string.invalid_time_range),
                         color = MaterialTheme.colorScheme.error,
@@ -1800,12 +1850,17 @@ private fun EditEventDialog(
                     }
                     TextButton(
                         onClick = {
+                            val startTime = LocalTime.ofSecondOfDay(startSeconds.toLong())
                             onSave(
                                 title.trim(),
                                 note.trim(),
                                 LocalDate.ofEpochDay(dateEpochDay),
-                                LocalTime.ofSecondOfDay(startSeconds.toLong()),
-                                LocalTime.ofSecondOfDay(endSeconds.toLong()),
+                                startTime,
+                                if (hasEndTime) {
+                                    LocalTime.ofSecondOfDay(endSeconds.toLong())
+                                } else {
+                                    startTime
+                                },
                                 withAlarm,
                                 reminderMinutes,
                                 selectedTags,
@@ -1905,9 +1960,10 @@ private fun TimeSlotButton(
     secondsOfDay: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     val clockFormatter = rememberClockFormatter()
-    OutlinedButton(onClick = onClick, modifier = modifier) {
+    OutlinedButton(onClick = onClick, modifier = modifier, enabled = enabled) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.fillMaxWidth(),

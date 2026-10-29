@@ -159,7 +159,7 @@ class ScheduleWriter(context: Context) {
         repeat: RecurrenceRule = RecurrenceRule(Event.REPEAT_NONE),
         reminderMinutes: Int = Event.REMINDER_OFF,
     ): EventCreation {
-        require(start < end) { "Event end must be after its start" }
+        require(start <= end) { "Event end must not be before its start" }
         require(isValidReminder(reminderMinutes)) { "Invalid reminder: $reminderMinutes" }
         val selectedTags = tags.take(MAX_TAGS_PER_ITEM)
         val repeatPlan = planRecurrence(date, repeat)
@@ -312,7 +312,7 @@ class ScheduleWriter(context: Context) {
         tags: List<Tag>,
         reminderMinutes: Int? = null,
     ): EventMutation {
-        require(start < end) { "Event end must be after its start" }
+        require(start <= end) { "Event end must not be before its start" }
         if (reminderMinutes != null) {
             require(isValidReminder(reminderMinutes)) { "Invalid reminder: $reminderMinutes" }
         }

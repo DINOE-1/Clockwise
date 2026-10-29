@@ -362,8 +362,8 @@ class AiToolParser(
         } else {
             LocalTime.ofSecondOfDay(event.end.toLong())
         }
-        if (!end.isAfter(start)) {
-            throw error("invalid_time_range", "events[$index].end must be after start")
+        if (end.isBefore(start)) {
+            throw error("invalid_time_range", "events[$index].end must not be before start")
         }
         val targets = eventTargets(event, scope)
         val targetIds = targets.map { it.id }.toSet()
@@ -553,9 +553,14 @@ class AiToolParser(
             ?.let { parseDate(it, "events[$index].date") }
             ?: throw error("invalid_date", "events[$index].date is required (YYYY-MM-DD)")
         val start = parseTime(item, "start", "events[$index].start")
-        val end = parseTime(item, "end", "events[$index].end")
-        if (!end.isAfter(start)) {
-            throw error("invalid_time_range", "events[$index].end must be after start")
+        val end = if (item.containsKey("end")) {
+            parseTime(item, "end", "events[$index].end")
+        } else {
+            // Omitting end creates an event with only a start time.
+            start
+        }
+        if (end.isBefore(start)) {
+            throw error("invalid_time_range", "events[$index].end must not be before start")
         }
         val withAlarm = item.booleanOrNull("withAlarm") ?: false
         val reminderMinutes = parseReminderMinutes(item, "events[$index].reminderMinutes")

@@ -336,6 +336,7 @@ internal fun EventDraftEditDialog(
     var dateEpochDay by rememberSaveable { mutableLongStateOf(draft.date.toEpochDay()) }
     var startSeconds by rememberSaveable { mutableIntStateOf(draft.start.toSecondOfDay()) }
     var endSeconds by rememberSaveable { mutableIntStateOf(draft.end.toSecondOfDay()) }
+    var hasEndTime by rememberSaveable { mutableStateOf(draft.end.isAfter(draft.start)) }
     var withAlarm by rememberSaveable { mutableStateOf(draft.withAlarm) }
     var reminderMinutes by rememberSaveable { mutableIntStateOf(draft.reminderMinutes) }
     var selectedTagIds by rememberSaveable { mutableStateOf(draft.tags.map { it.id }.toLongArray()) }
@@ -362,12 +363,13 @@ internal fun EventDraftEditDialog(
         untilEpochDay = repeatUntilEpochDay,
     )
     val plan = if (repeatType == Event.REPEAT_NONE) null else planRecurrence(date, rule)
+    val startTime = LocalTime.ofSecondOfDay(startSeconds.toLong())
     val current = draft.copy(
         title = title,
         note = note,
         date = date,
-        start = LocalTime.ofSecondOfDay(startSeconds.toLong()),
-        end = LocalTime.ofSecondOfDay(endSeconds.toLong()),
+        start = startTime,
+        end = if (hasEndTime) LocalTime.ofSecondOfDay(endSeconds.toLong()) else startTime,
         withAlarm = withAlarm,
         repeatType = repeatType,
         repeatDays = if (repeatType == Event.REPEAT_WEEKLY) repeatDays else emptySet(),
@@ -429,7 +431,20 @@ internal fun EventDraftEditDialog(
                         label = stringResource(R.string.end_time_label),
                         secondsOfDay = endSeconds,
                         onClick = { timeField = EventDraftTimeField.END },
+                        enabled = hasEndTime,
                         modifier = Modifier.weight(1f),
+                    )
+                }
+                SwitchRow(
+                    label = stringResource(R.string.event_has_end_time),
+                    checked = hasEndTime,
+                    onCheckedChange = { hasEndTime = it },
+                )
+                if (!hasEndTime) {
+                    Text(
+                        text = stringResource(R.string.event_no_end_time_helper),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 OutlinedTextField(
@@ -592,9 +607,10 @@ private fun DraftTimeButton(
     secondsOfDay: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     val formatter = rememberClockFormatter()
-    OutlinedButton(onClick = onClick, modifier = modifier) {
+    OutlinedButton(onClick = onClick, modifier = modifier, enabled = enabled) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = label,

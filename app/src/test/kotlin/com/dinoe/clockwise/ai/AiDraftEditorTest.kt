@@ -60,6 +60,16 @@ class AiDraftEditorTest {
     }
 
     @Test
+    fun eventWithoutEndTimeHasNoIssue() {
+        assertNull(
+            AiDraftEditor.eventIssue(
+                event(start = LocalTime.of(9, 0), end = LocalTime.of(9, 0)),
+                now,
+            ),
+        )
+    }
+
+    @Test
     fun alarmInPastIsRejected() {
         assertEquals(
             AiDraftIssue.ALARM_IN_PAST,
