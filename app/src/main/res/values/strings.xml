@@ -496,4 +496,10 @@
     <string name="onboarding_tags_body">建立彩色標籤並套用到活動與鬧鐘，行程顏色一眼就能分辨。</string>
     <string name="onboarding_settings_title">設定</string>
     <string name="onboarding_settings_body">語言、主題、時間格式、鬧鐘行為與備份都在這裡調整。</string>
+    <string name="onboarding_sample_meeting">設計同步會議</string>
+    <string name="onboarding_sample_break">午餐</string>
+    <string name="onboarding_sample_reply">已加入週四 10:00–11:00 的行程。</string>
+    <string name="onboarding_sample_tag_work">工作</string>
+    <string name="onboarding_sample_tag_personal">個人</string>
+    <string name="onboarding_sample_tag_birthday">生日</string>
 </resources>

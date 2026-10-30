@@ -496,4 +496,10 @@
     <string name="onboarding_tags_body">Create colored tags for events and alarms so the schedule is easy to scan.</string>
     <string name="onboarding_settings_title">Settings</string>
     <string name="onboarding_settings_body">Adjust language, theme, time format, alarm behavior, and backups here.</string>
+    <string name="onboarding_sample_meeting">Design sync</string>
+    <string name="onboarding_sample_break">Lunch</string>
+    <string name="onboarding_sample_reply">Added to Thursday, 10:00–11:00.</string>
+    <string name="onboarding_sample_tag_work">Work</string>
+    <string name="onboarding_sample_tag_personal">Personal</string>
+    <string name="onboarding_sample_tag_birthday">Birthday</string>
 </resources>

@@ -3,10 +3,8 @@ package com.dinoe.clockwise.ui
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
-import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,10 +41,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -68,42 +65,51 @@ class OnboardingPreferences(context: Context) {
     }
 }
 
+private enum class OnboardingIllustration {
+    CALENDAR_MONTH,
+    CALENDAR_DAY,
+    ALARMS,
+    AI,
+    TAGS,
+    SETTINGS,
+}
+
 private data class OnboardingTutorialPage(
     @StringRes val titleRes: Int,
     @StringRes val bodyRes: Int,
-    @DrawableRes val imageRes: Int,
+    val illustration: OnboardingIllustration,
 )
 
 private val tutorialPages = listOf(
     OnboardingTutorialPage(
         R.string.onboarding_calendar_month_title,
         R.string.onboarding_calendar_month_body,
-        R.drawable.onboarding_calendar_month,
+        OnboardingIllustration.CALENDAR_MONTH,
     ),
     OnboardingTutorialPage(
         R.string.onboarding_calendar_day_title,
         R.string.onboarding_calendar_day_body,
-        R.drawable.onboarding_calendar_day,
+        OnboardingIllustration.CALENDAR_DAY,
     ),
     OnboardingTutorialPage(
         R.string.onboarding_alarm_title,
         R.string.onboarding_alarm_body,
-        R.drawable.onboarding_alarms,
+        OnboardingIllustration.ALARMS,
     ),
     OnboardingTutorialPage(
         R.string.onboarding_ai_title,
         R.string.onboarding_ai_body,
-        R.drawable.onboarding_ai,
+        OnboardingIllustration.AI,
     ),
     OnboardingTutorialPage(
         R.string.onboarding_tags_title,
         R.string.onboarding_tags_body,
-        R.drawable.onboarding_tags,
+        OnboardingIllustration.TAGS,
     ),
     OnboardingTutorialPage(
         R.string.onboarding_settings_title,
         R.string.onboarding_settings_body,
-        R.drawable.onboarding_settings,
+        OnboardingIllustration.SETTINGS,
     ),
 )
 
@@ -361,14 +367,21 @@ private fun TutorialPage(page: OnboardingTutorialPage, showSwipeHint: Boolean) {
             color = MaterialTheme.colorScheme.surfaceContainer,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
-            Image(
-                painter = painterResource(page.imageRes),
-                contentDescription = stringResource(page.titleRes),
-                contentScale = ContentScale.Fit,
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(8.dp),
-            )
+                    .padding(8.dp)
+                    .clearAndSetSemantics {},
+            ) {
+                when (page.illustration) {
+                    OnboardingIllustration.CALENDAR_MONTH -> CalendarMonthIllustration()
+                    OnboardingIllustration.CALENDAR_DAY -> CalendarDayIllustration()
+                    OnboardingIllustration.ALARMS -> AlarmIllustration()
+                    OnboardingIllustration.AI -> AiIllustration()
+                    OnboardingIllustration.TAGS -> TagsIllustration()
+                    OnboardingIllustration.SETTINGS -> SettingsIllustration()
+                }
+            }
         }
         if (showSwipeHint) {
             Text(
