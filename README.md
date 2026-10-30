@@ -37,6 +37,8 @@ screenshots for both languages are kept in [`images/en`](images/en) and
 - Create an event directly from the day timeline; drag the draft block to fine-tune start and end
   times. The time snaps to a configurable interval (5–60 minutes, default 15).
 - Recurring events: daily, weekly on selected weekdays, or until a chosen end date.
+- Event reminders: pick a preset (5, 10, or 30 minutes) or enter any custom number of minutes up
+  to seven days before the start.
 - Edit or delete a single occurrence, this and all following occurrences, or the whole series.
   Series edits keep each occurrence's date and only sync shared fields.
 
@@ -68,6 +70,8 @@ screenshots for both languages are kept in [`images/en`](images/en) and
 - Themes: follow system, light, dark, and Gruvbox Material.
 - Wheel or clock time pickers, configurable timeline snap interval, and two alarm-stack animations.
 - Colored tags shared by events and alarms, with a per-item tag limit.
+- Import and export calendar events as iCalendar (`.ics`) files in **Settings → Data**. Export keeps
+  recurring events as `RRULE`; import adds events without replacing existing ones.
 - All data is stored locally in Room. No account, analytics, or Clockwise backend is involved.
 - Room schemas are exported to `app/schemas/` so database migrations can be reviewed and tested.
 

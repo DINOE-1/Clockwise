@@ -653,8 +653,7 @@ class ScheduleWriter(context: Context) {
         alarmIds.flatMap { alarmId -> tags.map { AlarmTagCrossRef(alarmId, it.id) } }
 
     private fun isValidReminder(reminderMinutes: Int): Boolean =
-        reminderMinutes == Event.REMINDER_OFF ||
-            reminderMinutes in Event.REMINDER_MINUTE_OPTIONS
+        Event.isValidReminderMinutes(reminderMinutes)
 
     private sealed interface SchedulerEffect {
         data class Schedule(val alarm: Alarm) : SchedulerEffect

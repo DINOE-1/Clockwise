@@ -787,10 +787,12 @@ class AiToolParser(
     private fun parseReminderMinutes(item: JsonObject, label: String): Int? {
         if (!item.containsKey("reminderMinutes")) return null
         val value = (item["reminderMinutes"] as? JsonPrimitive)?.intOrNull
-        if (value == null ||
-            (value != Event.REMINDER_OFF && value !in Event.REMINDER_MINUTE_OPTIONS)
-        ) {
-            throw error("invalid_reminder", "$label must be 0, 5, 10 or 30")
+        if (value == null || !Event.isValidReminderMinutes(value)) {
+            throw error(
+                "invalid_reminder",
+                "$label must be 0 or between ${Event.MIN_REMINDER_MINUTES} and " +
+                    "${Event.MAX_REMINDER_MINUTES} minutes",
+            )
         }
         return value
     }

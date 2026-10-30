@@ -26,6 +26,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.dinoe.clockwise.R
 import com.dinoe.clockwise.data.BackupRepository
+import com.dinoe.clockwise.data.IcsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -41,7 +42,9 @@ fun SettingsBackupSection() {
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val repository = remember(context) { BackupRepository(context) }
+    val icsRepository = remember(context) { IcsRepository(context) }
     var pendingImport by remember { mutableStateOf<Uri?>(null) }
+    var pendingIcsImport by remember { mutableStateOf<Uri?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
@@ -68,6 +71,31 @@ fun SettingsBackupSection() {
         if (uri != null) pendingImport = uri
     }
 
+    val icsExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/calendar"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val message = runCatching {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { stream ->
+                        icsRepository.exportIcs(stream)
+                    } ?: error("Unable to open the selected file")
+                }
+                resources.getString(R.string.ics_export_success)
+            }.getOrElse {
+                resources.getString(R.string.ics_export_failed)
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val icsImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) pendingIcsImport = uri
+    }
+
     SettingsSectionHeader(stringResource(R.string.settings_section_data))
     SettingsCard {
         SettingsActionRow(
@@ -83,6 +111,31 @@ fun SettingsBackupSection() {
             title = stringResource(R.string.backup_import_title),
             subtitle = stringResource(R.string.backup_import_subtitle),
             onClick = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
+            icon = Icons.Filled.Refresh,
+        )
+        SettingsDivider()
+        SettingsActionRow(
+            title = stringResource(R.string.ics_export_title),
+            subtitle = stringResource(R.string.ics_export_subtitle),
+            onClick = {
+                icsExportLauncher.launch("clockwise-calendar-${LocalDate.now()}.ics")
+            },
+            icon = Icons.Filled.Share,
+        )
+        SettingsDivider()
+        SettingsActionRow(
+            title = stringResource(R.string.ics_import_title),
+            subtitle = stringResource(R.string.ics_import_subtitle),
+            onClick = {
+                icsImportLauncher.launch(
+                    arrayOf(
+                        "text/calendar",
+                        "text/plain",
+                        "application/octet-stream",
+                        "*/*",
+                    ),
+                )
+            },
             icon = Icons.Filled.Refresh,
         )
     }
@@ -136,6 +189,66 @@ fun SettingsBackupSection() {
             },
             dismissButton = {
                 TextButton(onClick = { pendingImport = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    pendingIcsImport?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { pendingIcsImport = null },
+            title = { Text(stringResource(R.string.ics_import_confirm_title)) },
+            text = { Text(stringResource(R.string.ics_import_confirm_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingIcsImport = null
+                        scope.launch {
+                            val message = runCatching {
+                                val text = withContext(Dispatchers.IO) {
+                                    val declaredSize = runCatching {
+                                        context.contentResolver
+                                            .openFileDescriptor(uri, "r")
+                                            ?.use { it.statSize }
+                                    }.getOrNull()
+                                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                                        icsRepository.readImportText(stream, declaredSize)
+                                    } ?: error("Unable to read the selected file")
+                                }
+                                val result = withContext(Dispatchers.IO) {
+                                    icsRepository.importIcs(text)
+                                }
+                                if (result.skipped > 0) {
+                                    resources.getString(
+                                        R.string.ics_import_success_skipped,
+                                        result.imported,
+                                        result.skipped,
+                                    )
+                                } else {
+                                    resources.getString(
+                                        R.string.ics_import_success,
+                                        result.imported,
+                                    )
+                                }
+                            }.getOrElse { error ->
+                                resources.getString(
+                                    R.string.ics_import_failed,
+                                    error.message ?: resources.getString(R.string.ics_invalid_file),
+                                )
+                            }
+                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                        }
+                    },
+                ) {
+                    Text(
+                        text = stringResource(R.string.ics_import_action),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingIcsImport = null }) {
                     Text(stringResource(R.string.cancel))
                 }
             },

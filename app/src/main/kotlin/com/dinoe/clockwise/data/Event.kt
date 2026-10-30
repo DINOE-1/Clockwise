@@ -53,7 +53,7 @@ data class Event(
         if (allDay) date == epochDay else epochDay in date..lastCoveredEpochDay
 
     fun reminderTriggerMillis(zone: ZoneId = ZoneId.systemDefault()): Long? {
-        if (reminderMinutes !in REMINDER_MINUTE_OPTIONS) return null
+        if (reminderMinutes == REMINDER_OFF || !isValidReminderMinutes(reminderMinutes)) return null
         return LocalDate.ofEpochDay(date)
             .atTime(LocalTime.ofSecondOfDay(start.toLong()))
             .minusMinutes(reminderMinutes.toLong())
@@ -74,6 +74,11 @@ data class Event(
         const val REPEAT_WEEKLY = 2
 
         const val REMINDER_OFF = 0
+        const val MIN_REMINDER_MINUTES = 1
+        const val MAX_REMINDER_MINUTES = 10_080 // Seven days.
         val REMINDER_MINUTE_OPTIONS = listOf(5, 10, 30)
+
+        fun isValidReminderMinutes(minutes: Int): Boolean =
+            minutes == REMINDER_OFF || minutes in MIN_REMINDER_MINUTES..MAX_REMINDER_MINUTES
     }
 }

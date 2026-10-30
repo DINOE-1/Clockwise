@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -96,6 +97,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -2259,6 +2261,8 @@ internal fun ReminderPicker(
     reminderMinutes: Int,
     onReminderChange: (Int) -> Unit,
 ) {
+    var showCustomDialog by rememberSaveable { mutableStateOf(false) }
+    val isCustom = reminderMinutes > 0 && reminderMinutes !in Event.REMINDER_MINUTE_OPTIONS
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = stringResource(R.string.event_reminder_label),
@@ -2279,6 +2283,19 @@ internal fun ReminderPicker(
                     },
                 )
             }
+            FilterChip(
+                selected = isCustom,
+                onClick = { showCustomDialog = true },
+                label = {
+                    Text(
+                        if (isCustom) {
+                            stringResource(R.string.reminder_minutes_before, reminderMinutes)
+                        } else {
+                            stringResource(R.string.reminder_custom)
+                        },
+                    )
+                },
+            )
         }
         if (reminderMinutes > 0) {
             Text(
@@ -2288,6 +2305,73 @@ internal fun ReminderPicker(
             )
         }
     }
+    if (showCustomDialog) {
+        ReminderCustomDialog(
+            initialMinutes = reminderMinutes.takeIf { isCustom },
+            onDismiss = { showCustomDialog = false },
+            onConfirm = { minutes ->
+                onReminderChange(minutes)
+                showCustomDialog = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun ReminderCustomDialog(
+    initialMinutes: Int?,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit,
+) {
+    var text by rememberSaveable { mutableStateOf(initialMinutes?.toString().orEmpty()) }
+    val minutes = text.toIntOrNull()
+    val valid = minutes != null &&
+        minutes in Event.MIN_REMINDER_MINUTES..Event.MAX_REMINDER_MINUTES
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.reminder_custom_title)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { input -> text = input.filter { it in '0'..'9' }.take(5) },
+                label = { Text(stringResource(R.string.reminder_custom_minutes_label)) },
+                supportingText = {
+                    Text(
+                        if (text.isNotEmpty() && !valid) {
+                            stringResource(
+                                R.string.reminder_custom_invalid,
+                                Event.MIN_REMINDER_MINUTES,
+                                Event.MAX_REMINDER_MINUTES,
+                            )
+                        } else {
+                            stringResource(
+                                R.string.reminder_custom_helper,
+                                Event.MIN_REMINDER_MINUTES,
+                                Event.MAX_REMINDER_MINUTES,
+                            )
+                        },
+                    )
+                },
+                isError = text.isNotEmpty() && !valid,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { minutes?.let(onConfirm) },
+                enabled = valid,
+            ) {
+                Text(stringResource(R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
 }
 
 @Composable

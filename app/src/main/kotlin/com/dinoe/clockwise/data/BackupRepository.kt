@@ -49,6 +49,16 @@ internal fun backupTooLargeError(): BackupException = BackupException(
 internal fun readBoundedBackupText(
     input: InputStream,
     limitBytes: Long = BackupRepository.MAX_BACKUP_BYTES,
+): String = readBoundedText(input, limitBytes) { backupTooLargeError() }
+
+/**
+ * Buffers [input] as UTF-8 text, refusing to hold more than [limitBytes]. [tooLarge] supplies the
+ * error for the caller's file type so the message names the right document.
+ */
+internal fun readBoundedText(
+    input: InputStream,
+    limitBytes: Long,
+    tooLarge: () -> Exception,
 ): String {
     val bytes = ByteArrayOutputStream()
     val buffer = ByteArray(READ_BUFFER_BYTES)
@@ -57,7 +67,7 @@ internal fun readBoundedBackupText(
         val read = input.read(buffer)
         if (read < 0) break
         total += read
-        if (total > limitBytes) throw backupTooLargeError()
+        if (total > limitBytes) throw tooLarge()
         bytes.write(buffer, 0, read)
     }
     return bytes.toString(Charsets.UTF_8.name())
@@ -224,9 +234,7 @@ class BackupRepository(context: Context) {
             throw BackupException("Event $id has an invalid repeat type")
         }
         val reminderMinutes = obj.optionalInt("reminderMinutes") ?: Event.REMINDER_OFF
-        if (reminderMinutes != Event.REMINDER_OFF &&
-            reminderMinutes !in Event.REMINDER_MINUTE_OPTIONS
-        ) {
+        if (!Event.isValidReminderMinutes(reminderMinutes)) {
             throw BackupException("Event $id has an invalid reminder")
         }
         return BackupEvent(

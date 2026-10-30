@@ -1,7 +1,9 @@
 package com.dinoe.clockwise.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -34,9 +36,31 @@ class ReminderTest {
     }
 
     @Test
-    fun unsupportedReminderHasNoTrigger() {
+    fun customReminderTriggersTheRequestedMinutesBeforeTheStart() {
         val event = event(date = LocalDate.of(2026, 3, 10), start = LocalTime.of(9, 30), reminder = 7)
+        val expected = LocalDateTime.of(2026, 3, 10, 9, 23)
+            .atZone(zone).toInstant().toEpochMilli()
+        assertEquals(expected, event.reminderTriggerMillis(zone))
+    }
+
+    @Test
+    fun reminderBeyondTheLimitHasNoTrigger() {
+        val event = event(
+            date = LocalDate.of(2026, 3, 10),
+            start = LocalTime.of(9, 30),
+            reminder = Event.MAX_REMINDER_MINUTES + 1,
+        )
         assertNull(event.reminderTriggerMillis(zone))
+    }
+
+    @Test
+    fun reminderValidationAcceptsTheSupportedRangeOnly() {
+        assertTrue(Event.isValidReminderMinutes(Event.REMINDER_OFF))
+        assertTrue(Event.isValidReminderMinutes(Event.MIN_REMINDER_MINUTES))
+        assertTrue(Event.isValidReminderMinutes(45))
+        assertTrue(Event.isValidReminderMinutes(Event.MAX_REMINDER_MINUTES))
+        assertFalse(Event.isValidReminderMinutes(-1))
+        assertFalse(Event.isValidReminderMinutes(Event.MAX_REMINDER_MINUTES + 1))
     }
 
     private fun event(date: LocalDate, start: LocalTime, reminder: Int): Event = Event(

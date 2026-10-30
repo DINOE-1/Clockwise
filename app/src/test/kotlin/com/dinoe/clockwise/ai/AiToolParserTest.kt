@@ -95,6 +95,22 @@ class AiToolParserTest {
     }
 
     @Test
+    fun parsesCustomEventReminderMinutes() {
+        val event = parser.parseEvents(
+            """
+            {"events":[{
+              "title":"Meeting",
+              "date":"2026-10-25",
+              "start":"10:00",
+              "end":"11:00",
+              "reminderMinutes":45
+            }]}
+            """.trimIndent(),
+        ).single()
+        assertEquals(45, event.reminderMinutes)
+    }
+
+    @Test
     fun rejectsUnsupportedReminderMinutes() {
         val error = expectFailure {
             parser.parseEvents(
@@ -104,7 +120,7 @@ class AiToolParserTest {
                   "date":"2026-10-25",
                   "start":"10:00",
                   "end":"11:00",
-                  "reminderMinutes":15
+                  "reminderMinutes":10081
                 }]}
                 """.trimIndent(),
             )

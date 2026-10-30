@@ -1,5 +1,6 @@
 package com.dinoe.clockwise.ai
 
+import com.dinoe.clockwise.data.Event
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
@@ -192,8 +193,9 @@ object AiTools {
                     name = CREATE_EVENTS,
                     description = "Propose creating calendar events. Recurrence none/daily/weekly; " +
                         "daily and weekly require until. withAlarm creates an alarm at each start. " +
-                        "reminderMinutes 5/10/30 shows a notification before each occurrence; 0 " +
-                        "or omitted disables it. Omit end for a quick activity that only needs a " +
+                        "reminderMinutes sets how many minutes before each occurrence to " +
+                        "notify, up to ${Event.MAX_REMINDER_MINUTES}; 0 or omitted disables it. " +
+                        "Omit end for a quick activity that only needs a " +
                         "start time. Set allDay=true for an all-day event. For an event that ends " +
                         "on a later day (for example 23:00 to 07:00), pass endDate with the end " +
                         "day; end may then be earlier than start.",
@@ -242,15 +244,12 @@ object AiTools {
                                         putJsonObject("withAlarm") { put("type", "boolean") }
                                         putJsonObject("reminderMinutes") {
                                             put("type", "integer")
-                                            putJsonArray("enum") {
-                                                add(0)
-                                                add(5)
-                                                add(10)
-                                                add(30)
-                                            }
+                                            put("minimum", Event.REMINDER_OFF)
+                                            put("maximum", Event.MAX_REMINDER_MINUTES)
                                             put(
                                                 "description",
-                                                "Notification minutes before the start; 0 disables",
+                                                "Notification minutes before the start, up to " +
+                                                    "${Event.MAX_REMINDER_MINUTES}; 0 disables",
                                             )
                                         }
                                         putJsonObject("repeat") {
@@ -374,8 +373,9 @@ object AiTools {
                     name = UPDATE_EVENTS,
                     description = "Update existing events. Call list_events first for ids. " +
                         "Omitted fields keep their value; tags replace the full list; " +
-                        "reminderMinutes 0/5/10/30 changes the notification reminder; repeat " +
-                        "rules cannot be changed. Date cannot change with entire_series. Use " +
+                        "reminderMinutes changes the notification reminder (0 disables, " +
+                        "otherwise minutes before the start, up to ${Event.MAX_REMINDER_MINUTES}); " +
+                        "repeat rules cannot be changed. Date cannot change with entire_series. Use " +
                         "allDay=true for an all-day event and endDate when the event ends on a " +
                         "later day.",
                     parameters = buildJsonObject {
@@ -431,15 +431,12 @@ object AiTools {
                                         putJsonObject("withAlarm") { put("type", "boolean") }
                                         putJsonObject("reminderMinutes") {
                                             put("type", "integer")
-                                            putJsonArray("enum") {
-                                                add(0)
-                                                add(5)
-                                                add(10)
-                                                add(30)
-                                            }
+                                            put("minimum", Event.REMINDER_OFF)
+                                            put("maximum", Event.MAX_REMINDER_MINUTES)
                                             put(
                                                 "description",
-                                                "Notification minutes before the start; 0 disables",
+                                                "Notification minutes before the start, up to " +
+                                                    "${Event.MAX_REMINDER_MINUTES}; 0 disables",
                                             )
                                         }
                                         putJsonObject("tags") {

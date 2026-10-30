@@ -81,7 +81,8 @@ object AiPrompt {
           date. Explain this briefly.
         - An event can show a notification before its start (reminderMinutes). Use reminderMinutes for
           advance notice instead of a separate alarm, unless the user wants a ringing alarm at the
-          earlier time.
+          earlier time. Any whole number of minutes from 1 to 10080 is allowed; use the exact number
+          the user asks for.
         - Recurrence is none, daily or weekly. Daily and weekly require an "until" date later than the
           event date; weekly requires ISO weekdays including the event's weekday.
 
