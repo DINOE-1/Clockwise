@@ -66,6 +66,8 @@ screenshots for both languages are kept in [`images/en`](images/en) and
 
 ### Customization and data
 
+- A first-run guide lets new users pick a language and theme, then swipes through screenshots of
+  each tab. Skipping or finishing it is remembered.
 - Language: follow system, English, or Traditional Chinese.
 - Themes: follow system, light, dark, and Gruvbox Material.
 - Wheel or clock time pickers, configurable timeline snap interval, and two alarm-stack animations.

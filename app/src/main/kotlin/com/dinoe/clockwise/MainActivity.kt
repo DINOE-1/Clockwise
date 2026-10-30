@@ -10,11 +10,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dinoe.clockwise.ui.ApplySystemBarStyle
 import com.dinoe.clockwise.ui.ClockwiseTheme
 import com.dinoe.clockwise.ui.MainScreen
+import com.dinoe.clockwise.ui.OnboardingPreferences
+import com.dinoe.clockwise.ui.OnboardingScreen
 import com.dinoe.clockwise.ui.ThemeMode
 import com.dinoe.clockwise.ui.ThemePreferences
 import com.dinoe.clockwise.ui.withAppLocale
@@ -34,17 +37,30 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
         )
         val themePreferences = ThemePreferences(applicationContext)
+        val onboardingPreferences = OnboardingPreferences(applicationContext)
         setContent {
             // Start with the platform theme so the first frame never blocks on DataStore.
             val themeMode by themePreferences.mode.collectAsStateWithLifecycle(
                 initialValue = ThemeMode.SYSTEM,
             )
+            var showOnboarding by rememberSaveable {
+                mutableStateOf(onboardingPreferences.shouldShow)
+            }
             ClockwiseTheme(themeMode = themeMode) {
                 ApplySystemBarStyle(this, themeMode)
-                MainScreen(
-                    openEventId = openEventId,
-                    onOpenEventConsumed = { openEventId = null },
-                )
+                if (showOnboarding) {
+                    OnboardingScreen(
+                        onFinish = {
+                            onboardingPreferences.markCompleted()
+                            showOnboarding = false
+                        },
+                    )
+                } else {
+                    MainScreen(
+                        openEventId = openEventId,
+                        onOpenEventConsumed = { openEventId = null },
+                    )
+                }
             }
         }
     }

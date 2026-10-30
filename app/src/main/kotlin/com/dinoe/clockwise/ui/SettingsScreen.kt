@@ -477,7 +477,7 @@ private fun <T> SegmentedPreference(
 }
 
 @Composable
-private fun SelectableOptionRow(
+internal fun SelectableOptionRow(
     label: String,
     selected: Boolean,
     onSelect: () -> Unit,

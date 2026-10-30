@@ -474,4 +474,26 @@
     <string name="ai_session_interrupted">The previous turn was interrupted when the app reopened. Send your message again.</string>
     <string name="ai_session_save_failed">Could not save the chat. Try again later.</string>
     <string name="ai_session_corrupt">Could not read the previous chat.</string>
+
+    <string name="onboarding_title">Welcome</string>
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_back">Back</string>
+    <string name="onboarding_next">Next</string>
+    <string name="onboarding_start">Start</string>
+    <string name="onboarding_swipe_hint">Swipe left or right to see more</string>
+    <string name="onboarding_setup_title">Pick a language and look</string>
+    <string name="onboarding_setup_body">Choose the language and theme you like. You can change both later in Settings.</string>
+    <string name="onboarding_setup_hint">When you are ready, swipe left to see what each tab does.</string>
+    <string name="onboarding_calendar_month_title">Calendar</string>
+    <string name="onboarding_calendar_month_body">Use the arrows to change months, and tap a day to see its events.</string>
+    <string name="onboarding_calendar_day_title">Day timeline</string>
+    <string name="onboarding_calendar_day_body">Tap Day in the top right to switch to the timeline and scroll through the day.</string>
+    <string name="onboarding_alarm_title">Alarms</string>
+    <string name="onboarding_alarm_body">All alarms live here. Tap a card to edit it, long-press to delete, or use the switch to turn it on or off.</string>
+    <string name="onboarding_ai_title">AI assistant</string>
+    <string name="onboarding_ai_body">Describe what you want in plain language. The AI shows a preview and only applies changes after you confirm.</string>
+    <string name="onboarding_tags_title">Tags</string>
+    <string name="onboarding_tags_body">Create colored tags for events and alarms so the schedule is easy to scan.</string>
+    <string name="onboarding_settings_title">Settings</string>
+    <string name="onboarding_settings_body">Adjust language, theme, time format, alarm behavior, and backups here.</string>
 </resources>

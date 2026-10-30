@@ -474,4 +474,26 @@
     <string name="ai_session_interrupted">上一輪對話在重新開啟時中斷，請重新送出。</string>
     <string name="ai_session_save_failed">無法保存對話，請稍後再試。</string>
     <string name="ai_session_corrupt">無法讀取先前的對話內容。</string>
+
+    <string name="onboarding_title">快速開始</string>
+    <string name="onboarding_skip">略過</string>
+    <string name="onboarding_back">上一步</string>
+    <string name="onboarding_next">下一步</string>
+    <string name="onboarding_start">開始使用</string>
+    <string name="onboarding_swipe_hint">左右滑動查看更多</string>
+    <string name="onboarding_setup_title">選擇語言與外觀</string>
+    <string name="onboarding_setup_body">挑一個順眼的語言和主題，之後都能在設定裡更改。</string>
+    <string name="onboarding_setup_hint">選好後，往左滑看看各頁籤怎麼用。</string>
+    <string name="onboarding_calendar_month_title">行事曆</string>
+    <string name="onboarding_calendar_month_body">用左右箭頭切換月份，點一下日期查看當天活動。</string>
+    <string name="onboarding_calendar_day_title">日時間軸</string>
+    <string name="onboarding_calendar_day_body">點右上角「日」切換時間軸，前後捲動查看一整天的安排。</string>
+    <string name="onboarding_alarm_title">鬧鐘</string>
+    <string name="onboarding_alarm_body">所有鬧鐘集中在這裡。點卡片編輯、長按刪除，開關可快速啟用或停用。</string>
+    <string name="onboarding_ai_title">AI 助手</string>
+    <string name="onboarding_ai_body">用自然語言描述安排，AI 會先顯示預覽，確認後才套用變更。</string>
+    <string name="onboarding_tags_title">標籤</string>
+    <string name="onboarding_tags_body">建立彩色標籤並套用到活動與鬧鐘，行程顏色一眼就能分辨。</string>
+    <string name="onboarding_settings_title">設定</string>
+    <string name="onboarding_settings_body">語言、主題、時間格式、鬧鐘行為與備份都在這裡調整。</string>
 </resources>
