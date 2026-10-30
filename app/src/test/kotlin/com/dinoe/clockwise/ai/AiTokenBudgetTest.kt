@@ -84,4 +84,43 @@ class AiTokenBudgetTest {
         )
         assertEquals(0, AiTokenBudget.inputBudgetFor(1))
     }
+
+    @Test
+    fun toolResultAllowanceStartsAtThePerResultLimit() {
+        assertEquals(
+            AiTokenBudget.MAX_TOOL_RESULT_TOKENS,
+            AiTokenBudget.toolResultAllowance(usedTokens = 0),
+        )
+    }
+
+    @Test
+    fun toolResultAllowanceShrinksWithTheAggregateBudget() {
+        val used = AiTokenBudget.MAX_CURRENT_TOOL_TOKENS - 300
+        assertEquals(300, AiTokenBudget.toolResultAllowance(used))
+    }
+
+    @Test
+    fun toolResultAllowanceKeepsTheMinimumAfterTheBudgetIsSpent() {
+        assertEquals(
+            AiTokenBudget.MIN_TOOL_RESULT_TOKENS,
+            AiTokenBudget.toolResultAllowance(AiTokenBudget.MAX_CURRENT_TOOL_TOKENS),
+        )
+        assertEquals(
+            AiTokenBudget.MIN_TOOL_RESULT_TOKENS,
+            AiTokenBudget.toolResultAllowance(AiTokenBudget.MAX_CURRENT_TOOL_TOKENS * 2),
+        )
+        assertTrue(AiTokenBudget.MIN_TOOL_RESULT_TOKENS < AiTokenBudget.MAX_TOOL_RESULT_TOKENS)
+    }
+
+    @Test
+    fun twoFullPayloadsSpendTheAggregateBudget() {
+        var used = 0
+        repeat(2) { used += AiTokenBudget.toolResultAllowance(used) }
+        assertEquals(AiTokenBudget.MAX_CURRENT_TOOL_TOKENS, used)
+        // Once the aggregate budget is spent only the minimum envelope is granted.
+        assertEquals(
+            AiTokenBudget.MIN_TOOL_RESULT_TOKENS,
+            AiTokenBudget.toolResultAllowance(used),
+        )
+    }
 }

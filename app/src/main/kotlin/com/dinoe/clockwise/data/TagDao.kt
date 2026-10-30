@@ -21,6 +21,9 @@ interface TagDao {
     @Insert
     suspend fun insert(tag: Tag): Long
 
+    @Insert
+    suspend fun insertAll(tags: List<Tag>): List<Long>
+
     @Update
     suspend fun update(tag: Tag)
 
@@ -39,11 +42,23 @@ interface TagDao {
     @Query("SELECT * FROM alarm_tags")
     suspend fun getAlarmTagRefs(): List<AlarmTagCrossRef>
 
+    @Query("SELECT * FROM event_tags WHERE eventId IN (:eventIds)")
+    suspend fun getEventTagRefsFor(eventIds: List<Long>): List<EventTagCrossRef>
+
+    @Query("SELECT * FROM alarm_tags WHERE alarmId IN (:alarmIds)")
+    suspend fun getAlarmTagRefsFor(alarmIds: List<Long>): List<AlarmTagCrossRef>
+
     @Query("DELETE FROM event_tags WHERE eventId = :eventId")
     suspend fun clearEventTags(eventId: Long)
 
     @Query("DELETE FROM alarm_tags WHERE alarmId = :alarmId")
     suspend fun clearAlarmTags(alarmId: Long)
+
+    @Query("DELETE FROM event_tags WHERE eventId IN (:eventIds)")
+    suspend fun clearEventTagsByIds(eventIds: List<Long>)
+
+    @Query("DELETE FROM alarm_tags WHERE alarmId IN (:alarmIds)")
+    suspend fun clearAlarmTagsByIds(alarmIds: List<Long>)
 
     @Insert
     suspend fun insertEventTags(refs: List<EventTagCrossRef>)

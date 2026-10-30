@@ -144,6 +144,22 @@ class AiToolParser(
     private val alarmTagsById: Map<Long, List<TagRef>> = emptyMap(),
     private val eventTagsById: Map<Long, List<TagRef>> = emptyMap(),
 ) {
+    // Indexes over the injected subset only, so scope expansion and "has an alarm" checks do not
+    // rescan every loaded row per parsed item.
+    private val seriesById: Map<Long, List<Event>> by lazy {
+        eventsById.values
+            .filter { it.seriesId != 0L }
+            .groupBy { it.seriesId }
+            .mapValues { (_, events) -> events.sortedBy { it.occurrenceIndex } }
+    }
+
+    private val alarmCountByEventId: Map<Long, Int> by lazy {
+        alarmsById.values
+            .mapNotNull { alarm -> alarm.eventId }
+            .groupingBy { it }
+            .eachCount()
+    }
+
     fun parseAlarms(arguments: String): List<AlarmDraft> {
         val root = parseRoot(arguments)
         val items = root.array("alarms")
@@ -404,7 +420,7 @@ class AiToolParser(
         val targets = eventTargets(event, scope)
         val targetIds = targets.map { it.id }.toSet()
         val withAlarm = (item.booleanOrNull("withAlarm")
-            ?: alarmsById.values.any { it.eventId == event.id }) && !allDay
+            ?: alarmCountByEventId.containsKey(event.id)) && !allDay
         val reminderMinutes = if (allDay) {
             Event.REMINDER_OFF
         } else {
@@ -431,7 +447,7 @@ class AiToolParser(
             previousDate = previousDate,
             previousStart = LocalTime.ofSecondOfDay(event.start.toLong()),
             previousEnd = LocalTime.ofSecondOfDay(event.endTimeOfDay.toLong()),
-            previousWithAlarm = alarmsById.values.any { it.eventId in targetIds },
+            previousWithAlarm = targetIds.any { it in alarmCountByEventId },
             previousReminderMinutes = event.reminderMinutes,
             isSeries = isSeries,
             endDayOffset = endDayOffset,
@@ -454,7 +470,7 @@ class AiToolParser(
         val scope = parseScope(item, isSeries, "events[$index]")
         val targets = eventTargets(event, scope)
         val targetIds = targets.map { it.id }.toSet()
-        val linkedAlarms = alarmsById.values.count { it.eventId in targetIds }
+        val linkedAlarms = targetIds.sumOf { alarmCountByEventId[it] ?: 0 }
         return EventDeleteDraft(
             eventId = id,
             scope = scope,
@@ -495,9 +511,7 @@ class AiToolParser(
 
     private fun eventTargets(event: Event, scope: EventScope): List<Event> {
         if (event.seriesId == 0L || scope == EventScope.THIS_EVENT) return listOf(event)
-        val series = eventsById.values
-            .filter { it.seriesId == event.seriesId }
-            .sortedBy { it.occurrenceIndex }
+        val series = seriesById[event.seriesId].orEmpty()
         val targets = when (scope) {
             EventScope.THIS_EVENT -> listOf(event)
             EventScope.THIS_AND_SUBSEQUENT ->

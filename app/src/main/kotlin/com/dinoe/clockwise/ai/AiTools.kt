@@ -495,6 +495,15 @@ object AiTools {
         }
     }
 
+    /**
+     * Serialized schema. Tool definitions are immutable, so the text is produced once instead of
+     * on every model round.
+     */
+    val definitionsJson: String by lazy { definitions.toString() }
+
+    /** Estimated token cost of [definitions], derived from the cached [definitionsJson]. */
+    val definitionTokens: Int by lazy { AiTokenBudget.estimateTokens(definitionsJson) }
+
     private fun functionTool(
         name: String,
         description: String,

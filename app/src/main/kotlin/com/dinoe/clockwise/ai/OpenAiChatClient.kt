@@ -1,6 +1,9 @@
 package com.dinoe.clockwise.ai
 
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -98,6 +101,7 @@ class AiApiException(
 class OpenAiChatClient(
     private val httpClient: OkHttpClient = defaultHttpClient(),
     private val json: Json = Json,
+    private val computeDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     suspend fun complete(
         preset: AiProviderPreset,
@@ -111,6 +115,55 @@ class OpenAiChatClient(
         if (apiKey.isNullOrBlank()) {
             throw AiApiException(AiErrorKind.MISSING_KEY)
         }
+        // Request serialization (including Base64 image data URLs) and response parsing allocate
+        // heavily, so both run on the compute dispatcher. Network I/O stays with OkHttp, and
+        // canceling the coroutine still cancels the call.
+        val requestBody = withContext(computeDispatcher) {
+            buildCompletionBody(preset, model, messages, tools, maxTokens, reasoningEffort)
+                .toRequestBody(JSON_MEDIA_TYPE)
+        }
+        val request = Request.Builder()
+            .url(preset.chatUrl())
+            .header("Authorization", "Bearer ${apiKey.trim()}")
+            .header("Accept", "application/json")
+            .post(requestBody)
+            .build()
+        val response = execute(request)
+        if (response.code !in 200..299) {
+            throw withContext(computeDispatcher) { errorFor(response.code, response.body) }
+        }
+        return withContext(computeDispatcher) { parseCompletionBody(response.body) }
+    }
+
+    suspend fun listModels(
+        preset: AiProviderPreset,
+        apiKey: String?,
+    ): List<AiModelInfo> {
+        if (preset.requiresKeyForModels && apiKey.isNullOrBlank()) {
+            throw AiApiException(AiErrorKind.MISSING_KEY)
+        }
+        val builder = Request.Builder()
+            .url(preset.modelsUrl())
+            .header("Accept", "application/json")
+            .get()
+        if (!apiKey.isNullOrBlank()) {
+            builder.header("Authorization", "Bearer ${apiKey.trim()}")
+        }
+        val response = execute(builder.build())
+        if (response.code !in 200..299) {
+            throw withContext(computeDispatcher) { errorFor(response.code, response.body) }
+        }
+        return withContext(computeDispatcher) { parseModelsBody(response.body) }
+    }
+
+    internal fun buildCompletionBody(
+        preset: AiProviderPreset,
+        model: String,
+        messages: List<ChatMessage>,
+        tools: JsonArray? = null,
+        maxTokens: Int = 4096,
+        reasoningEffort: AiReasoningEffort = AiReasoningEffort.LOW,
+    ): String {
         val body = buildJsonObject {
             put("model", model)
             put(
@@ -141,34 +194,7 @@ class OpenAiChatClient(
             }
             preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
         }
-        val request = Request.Builder()
-            .url(preset.chatUrl())
-            .header("Authorization", "Bearer ${apiKey.trim()}")
-            .header("Accept", "application/json")
-            .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .build()
-        val response = execute(request)
-        if (response.code !in 200..299) throw errorFor(response.code, response.body)
-        return parseCompletion(response.body)
-    }
-
-    suspend fun listModels(
-        preset: AiProviderPreset,
-        apiKey: String?,
-    ): List<AiModelInfo> {
-        if (preset.requiresKeyForModels && apiKey.isNullOrBlank()) {
-            throw AiApiException(AiErrorKind.MISSING_KEY)
-        }
-        val builder = Request.Builder()
-            .url(preset.modelsUrl())
-            .header("Accept", "application/json")
-            .get()
-        if (!apiKey.isNullOrBlank()) {
-            builder.header("Authorization", "Bearer ${apiKey.trim()}")
-        }
-        val response = execute(builder.build())
-        if (response.code !in 200..299) throw errorFor(response.code, response.body)
-        return parseModels(response.body)
+        return body.toString()
     }
 
     private fun buildMessages(
@@ -244,7 +270,7 @@ class OpenAiChatClient(
         }
     }
 
-    private fun parseCompletion(body: String): ChatCompletion {
+    internal fun parseCompletionBody(body: String): ChatCompletion {
         try {
             val root = json.parseToJsonElement(body).jsonObject
             val choice = root["choices"]
@@ -312,7 +338,7 @@ class OpenAiChatClient(
         else -> null
     }
 
-    private fun parseModels(body: String): List<AiModelInfo> {
+    internal fun parseModelsBody(body: String): List<AiModelInfo> {
         try {
             val root = json.parseToJsonElement(body).jsonObject
             val data = root["data"] as? JsonArray ?: return emptyList()

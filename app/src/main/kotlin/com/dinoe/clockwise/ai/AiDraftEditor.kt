@@ -1,8 +1,7 @@
 package com.dinoe.clockwise.ai
 
 import com.dinoe.clockwise.data.Event
-import com.dinoe.clockwise.data.MAX_OCCURRENCES_PER_SERIES
-import com.dinoe.clockwise.data.planRecurrence
+import com.dinoe.clockwise.data.RecurrenceDates
 import java.time.LocalDateTime
 import java.time.LocalTime
 
@@ -40,7 +39,11 @@ object AiDraftEditor {
             null
         }
 
-    fun eventIssue(draft: EventDraft, now: LocalDateTime): AiDraftIssue? {
+    fun eventIssue(
+        draft: EventDraft,
+        now: LocalDateTime,
+        planned: RecurrenceDates? = null,
+    ): AiDraftIssue? {
         if (draft.title.isBlank()) return AiDraftIssue.TITLE_REQUIRED
         if (!draft.allDay) {
             val startDateTime = draft.date.atTime(draft.start)
@@ -52,18 +55,22 @@ object AiDraftEditor {
         }
         if (draft.repeatType == Event.REPEAT_NONE) return null
         val until = draft.repeatUntil ?: return AiDraftIssue.REPEAT_UNTIL_INVALID
-        if (!until.isAfter(draft.date)) return AiDraftIssue.REPEAT_UNTIL_INVALID
-        if (draft.repeatType == Event.REPEAT_WEEKLY) {
-            if (draft.repeatDays.isEmpty()) return AiDraftIssue.REPEAT_WEEKDAYS_REQUIRED
-            if (draft.date.dayOfWeek.value !in draft.repeatDays) {
-                return AiDraftIssue.REPEAT_WEEKDAY_MISSING
-            }
+        return when (
+            EventRecurrencePlanner.issue(
+                date = draft.date,
+                type = draft.repeatType,
+                days = draft.repeatDays,
+                untilEpochDay = until.toEpochDay(),
+                requireWeekdayMatch = true,
+                planned = planned,
+            )
+        ) {
+            null -> null
+            RecurrenceDraftIssue.UNTIL_INVALID -> AiDraftIssue.REPEAT_UNTIL_INVALID
+            RecurrenceDraftIssue.WEEKDAYS_REQUIRED -> AiDraftIssue.REPEAT_WEEKDAYS_REQUIRED
+            RecurrenceDraftIssue.WEEKDAY_MISSING -> AiDraftIssue.REPEAT_WEEKDAY_MISSING
+            RecurrenceDraftIssue.TOO_MANY_OCCURRENCES -> AiDraftIssue.TOO_MANY_OCCURRENCES
         }
-        val plan = planRecurrence(draft.date, draft.recurrenceRule())
-        if (plan.limitReached || plan.totalOccurrences > MAX_OCCURRENCES_PER_SERIES) {
-            return AiDraftIssue.TOO_MANY_OCCURRENCES
-        }
-        return null
     }
 
     fun normalizeAlarm(draft: AlarmDraft): AlarmDraft = draft.copy(
@@ -97,9 +104,11 @@ object AiDraftEditor {
             )
         }
         return normalized.copy(
-            occurrenceCount = planRecurrence(
-                normalized.date,
-                normalized.recurrenceRule(),
+            occurrenceCount = EventRecurrencePlanner.plan(
+                date = normalized.date,
+                type = normalized.repeatType,
+                days = normalized.repeatDays,
+                untilEpochDay = normalized.repeatUntil?.toEpochDay() ?: 0L,
             ).totalOccurrences,
         )
     }

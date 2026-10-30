@@ -30,7 +30,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -61,7 +62,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -106,7 +106,10 @@ private const val StackPeekLayers = 3
 // Snackbar has no custom duration, so show it indefinitely and dismiss after this long.
 private const val SAVED_NOTICE_MILLIS = 1_500L
 
-private sealed interface AlarmListItem {
+// Height and chevron animations of a stack; members leave the drawer list after this long.
+private const val STACK_ANIMATION_MILLIS = 220
+
+internal sealed interface AlarmListItem {
     val key: String
 
     data class Single(val alarm: Alarm) : AlarmListItem {
@@ -117,8 +120,31 @@ private sealed interface AlarmListItem {
         override val key: String = "stack:${group.key}"
     }
 
-    data class Member(val alarm: Alarm) : AlarmListItem {
+    data class Member(val groupKey: String, val alarm: Alarm) : AlarmListItem {
         override val key: String = "alarm:${alarm.id}"
+    }
+}
+
+// One flat list entry per alarm, so a stack's members become their own keyed lazy items instead
+// of a column inside the stack card. Drawer rows stay listed while their collapse animation
+// runs so they can shrink out instead of disappearing.
+internal fun buildAlarmListItems(
+    groups: List<AlarmGroup>,
+    expandedGroupKeys: Set<String>,
+    drawerExpansion: Boolean,
+    collapsingGroupKeys: Set<String> = emptySet(),
+): List<AlarmListItem> = buildList {
+    groups.forEach { group ->
+        if (!group.isStack) {
+            add(AlarmListItem.Single(group.front))
+            return@forEach
+        }
+        add(AlarmListItem.Stack(group))
+        val showMembers = group.key in expandedGroupKeys ||
+            (drawerExpansion && group.key in collapsingGroupKeys)
+        if (showMembers) {
+            group.members.forEach { add(AlarmListItem.Member(group.key, it)) }
+        }
     }
 }
 
@@ -180,19 +206,11 @@ fun AlarmScreen(
     val fireDateFormatter = rememberDatePatternFormatter("MMMdEEEE")
     val fireDateWithYearFormatter = rememberDatePatternFormatter("yMMMdEEEE")
 
-    val listItems = remember(groups, expandedGroupKeys, drawerExpansion) {
-        buildList {
-            groups.forEach { group ->
-                if (group.isStack) {
-                    add(AlarmListItem.Stack(group))
-                    if (!drawerExpansion && group.key in expandedGroupKeys) {
-                        group.members.forEach { add(AlarmListItem.Member(it)) }
-                    }
-                } else {
-                    add(AlarmListItem.Single(group.front))
-                }
-            }
-        }
+    // Keys of the stacks whose drawer rows are growing into or still shrinking out of the list.
+    var expandingGroupKeys by remember { mutableStateOf(emptySet<String>()) }
+    var collapsingGroupKeys by remember { mutableStateOf(emptySet<String>()) }
+    val listItems = remember(groups, expandedGroupKeys, drawerExpansion, collapsingGroupKeys) {
+        buildAlarmListItems(groups, expandedGroupKeys, drawerExpansion, collapsingGroupKeys)
     }
 
     var showAddDialog by remember { mutableStateOf(false) }
@@ -238,16 +256,27 @@ fun AlarmScreen(
         viewModel.consumeError()
     }
 
-    // Drives the top countdown banner and refreshes it as time passes.
-    var now by remember { mutableStateOf(LocalDateTime.now()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            now = LocalDateTime.now()
-            val millisIntoMinute = now.second * 1_000L + now.nano / 1_000_000L
-            delay((60_000L - millisIntoMinute).coerceAtLeast(1_000L))
+    // Drawer rows are listed on their own, so they animate in on expand and stay listed until
+    // their shrink finishes; both windows last as long as the row animation.
+    val toggleGroup: (String) -> Unit = { key ->
+        val collapsing = drawerExpansion && key in expandedGroupKeys
+        if (drawerExpansion) {
+            if (collapsing) {
+                collapsingGroupKeys = collapsingGroupKeys + key
+            } else {
+                expandingGroupKeys = expandingGroupKeys + key
+            }
+            scope.launch {
+                delay(STACK_ANIMATION_MILLIS.toLong())
+                if (collapsing) {
+                    collapsingGroupKeys = collapsingGroupKeys - key
+                } else {
+                    expandingGroupKeys = expandingGroupKeys - key
+                }
+            }
         }
+        viewModel.toggleGroup(key)
     }
-    val nextRingAlarm = remember(groups, now) { groups.nextRingAlarm(now) }
 
     // Bumped on every resume so the permission hints re-evaluate after returning from settings.
     var resumeCount by remember { mutableIntStateOf(0) }
@@ -263,7 +292,6 @@ fun AlarmScreen(
     }
     LaunchedEffect(resumeCount) {
         permissionStatus = AlarmPermissions.read(context)
-        now = LocalDateTime.now()
     }
 
     val notificationDeniedMessage = stringResource(R.string.alarm_permission_notification_denied)
@@ -362,15 +390,11 @@ fun AlarmScreen(
                 .padding(innerPadding)
                 .fillMaxSize(),
         ) {
-            nextRingAlarm?.let { next ->
-                AlarmRingBanner(
-                    text = stringResource(
-                        R.string.alarm_ring_in,
-                        formatRingCountdown(resources, ringCountdown(next, now)),
-                    ),
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
-                )
-            }
+            AlarmRingBanner(
+                groups = groups,
+                refreshSignal = resumeCount,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+            )
             if (permissionStatus.hasAnyIssue) {
                 AlarmReliabilityCard(
                     status = permissionStatus,
@@ -390,12 +414,21 @@ fun AlarmScreen(
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    // Drawer rows bring their own gap, so a row that shrinks out takes it with it.
+                    verticalArrangement = if (drawerExpansion) {
+                        Arrangement.Top
+                    } else {
+                        Arrangement.spacedBy(8.dp)
+                    },
                 ) {
-                    items(listItems, key = { it.key }) { item ->
+                    itemsIndexed(listItems, key = { _, item -> item.key }) { index, item ->
                         // The drawer animates its own height, so let it move the list
                         // directly instead of chasing it with placement animations.
-                        val itemModifier = if (drawerExpansion) Modifier else Modifier.animateItem()
+                        val itemModifier = when {
+                            !drawerExpansion -> Modifier.animateItem()
+                            index == 0 -> Modifier
+                            else -> Modifier.padding(top = 8.dp)
+                        }
                         when (item) {
                             is AlarmListItem.Single -> AlarmRow(
                                 alarm = item.alarm,
@@ -412,52 +445,22 @@ fun AlarmScreen(
                                 onDeleteRequested = { alarmToDelete = item.alarm },
                             )
 
-                            is AlarmListItem.Stack -> {
-                                val group = item.group
-                                AlarmStackCard(
-                                    group = group,
-                                    tags = alarmTagMap[group.front.id].orEmpty(),
-                                    modifier = itemModifier,
-                                    expanded = group.key in expandedGroupKeys,
-                                    onToggleExpanded = { viewModel.toggleGroup(group.key) },
-                                    onToggle = { enabled -> viewModel.setEnabled(group.front, enabled) },
-                                    onDeleteRequested = { alarmToDelete = group.front },
-                                    memberContent = if (drawerExpansion) {
-                                        {
-                                            group.members.forEach { member ->
-                                                key(member.id) {
-                                                    AlarmRow(
-                                                        alarm = member,
-                                                        tags = alarmTagMap[member.id].orEmpty(),
-                                                        onClick = {
-                                                            if (member.eventId != null) {
-                                                                alarmToView = member
-                                                            } else {
-                                                                alarmToEdit = member
-                                                            }
-                                                        },
-                                                        onToggle = { enabled ->
-                                                            viewModel.setEnabled(member, enabled)
-                                                        },
-                                                        onDeleteRequested = {
-                                                            alarmToDelete = member
-                                                        },
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        null
-                                    },
-                                )
-                            }
+                            is AlarmListItem.Stack -> AlarmStackCard(
+                                group = item.group,
+                                tags = alarmTagMap[item.group.front.id].orEmpty(),
+                                modifier = itemModifier,
+                                expanded = item.group.key in expandedGroupKeys,
+                                onToggleExpanded = { toggleGroup(item.group.key) },
+                                onToggle = { enabled -> viewModel.setEnabled(item.group.front, enabled) },
+                                onDeleteRequested = { alarmToDelete = item.group.front },
+                            )
 
-                            is AlarmListItem.Member -> AlarmRow(
+                            is AlarmListItem.Member -> AlarmMemberRow(
                                 alarm = item.alarm,
                                 tags = alarmTagMap[item.alarm.id].orEmpty(),
-                                modifier = Modifier
-                                    .padding(start = 12.dp)
-                                    .animateItem(),
+                                drawer = drawerExpansion,
+                                expanded = item.groupKey in expandedGroupKeys,
+                                animateIn = item.groupKey in expandingGroupKeys,
                                 onClick = {
                                     if (item.alarm.eventId != null) {
                                         alarmToView = item.alarm
@@ -647,8 +650,26 @@ private fun AlarmTopBar() {
     TopAppBar(title = { Text(stringResource(R.string.alarm_title)) })
 }
 
+// Owns the minute ticker and the next-ring lookup so only the banner, not the whole list,
+// refreshes as time passes. [refreshSignal] restarts the tick when the screen resumes.
 @Composable
-private fun AlarmRingBanner(text: String, modifier: Modifier = Modifier) {
+private fun AlarmRingBanner(
+    groups: List<AlarmGroup>,
+    refreshSignal: Int,
+    modifier: Modifier = Modifier,
+) {
+    val resources = LocalResources.current
+    var now by remember { mutableStateOf(LocalDateTime.now()) }
+    LaunchedEffect(refreshSignal) {
+        while (true) {
+            val current = LocalDateTime.now()
+            now = current
+            val millisIntoMinute = current.second * 1_000L + current.nano / 1_000_000L
+            delay((60_000L - millisIntoMinute).coerceAtLeast(1_000L))
+        }
+    }
+    val nextRingAlarm = remember(groups, now) { groups.nextRingAlarm(now) } ?: return
+
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -664,7 +685,10 @@ private fun AlarmRingBanner(text: String, modifier: Modifier = Modifier) {
                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
             )
             Text(
-                text = text,
+                text = stringResource(
+                    R.string.alarm_ring_in,
+                    formatRingCountdown(resources, ringCountdown(nextRingAlarm, now)),
+                ),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 modifier = Modifier.padding(start = 12.dp),
@@ -682,11 +706,10 @@ private fun AlarmStackCard(
     onToggleExpanded: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onDeleteRequested: () -> Unit,
-    memberContent: (@Composable () -> Unit)? = null,
 ) {
     val expansion by animateFloatAsState(
         targetValue = if (expanded) 1f else 0f,
-        animationSpec = tween(durationMillis = 220),
+        animationSpec = tween(durationMillis = STACK_ANIMATION_MILLIS),
         label = "stackExpansion",
     )
     val peekLayers = minOf(StackPeekLayers, group.alarms.size - 1)
@@ -724,28 +747,58 @@ private fun AlarmStackCard(
                 onDeleteRequested = onDeleteRequested,
             )
         }
-        if (memberContent != null) {
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically(
-                    animationSpec = tween(durationMillis = 220),
-                    expandFrom = Alignment.Top,
-                ),
-                exit = shrinkVertically(
-                    animationSpec = tween(durationMillis = 220),
-                    shrinkTowards = Alignment.Top,
-                ),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, top = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    memberContent()
-                }
-            }
-        }
+    }
+}
+
+// One stack member. Drawer rows are listed on their own, so each reveals itself; fade rows are
+// added and removed with the group and animate their placement instead.
+@Composable
+private fun LazyItemScope.AlarmMemberRow(
+    alarm: Alarm,
+    tags: List<Tag>,
+    drawer: Boolean,
+    expanded: Boolean,
+    animateIn: Boolean,
+    onClick: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onDeleteRequested: () -> Unit,
+) {
+    if (!drawer) {
+        AlarmRow(
+            alarm = alarm,
+            tags = tags,
+            modifier = Modifier
+                .padding(start = 12.dp)
+                .animateItem(),
+            onClick = onClick,
+            onToggle = onToggle,
+            onDeleteRequested = onDeleteRequested,
+        )
+        return
+    }
+    // Only a row added by an expanding stack starts collapsed; a row that merely changed place,
+    // or one restored by scrolling, keeps its expanded height.
+    var revealed by rememberSaveable { mutableStateOf(!animateIn) }
+    LaunchedEffect(expanded) { revealed = expanded }
+    AnimatedVisibility(
+        visible = revealed,
+        enter = expandVertically(
+            animationSpec = tween(durationMillis = STACK_ANIMATION_MILLIS),
+            expandFrom = Alignment.Top,
+        ),
+        exit = shrinkVertically(
+            animationSpec = tween(durationMillis = STACK_ANIMATION_MILLIS),
+            shrinkTowards = Alignment.Top,
+        ),
+    ) {
+        AlarmRow(
+            alarm = alarm,
+            tags = tags,
+            modifier = Modifier.padding(start = 12.dp, top = 8.dp),
+            onClick = onClick,
+            onToggle = onToggle,
+            onDeleteRequested = onDeleteRequested,
+        )
     }
 }
 

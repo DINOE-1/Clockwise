@@ -15,14 +15,24 @@ import com.dinoe.clockwise.data.RecurrenceRule
 import com.dinoe.clockwise.data.ScheduleLimit
 import com.dinoe.clockwise.data.ScheduleLimitException
 import com.dinoe.clockwise.data.Tag
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.YearMonth
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class ViewMode { MONTH, DAY }
 
@@ -36,8 +46,36 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     private val preferences = ThemePreferences(application)
     private val appContext = application.applicationContext
 
-    val allEvents: StateFlow<List<Event>> = eventDao.observeAll()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    private val mutableSelectedDate = MutableStateFlow(LocalDate.now())
+    private val mutableDisplayedMonth = MutableStateFlow(YearMonth.from(mutableSelectedDate.value))
+
+    val selectedDate: StateFlow<LocalDate> = mutableSelectedDate.asStateFlow()
+
+    val displayedMonth: StateFlow<YearMonth> = mutableDisplayedMonth.asStateFlow()
+
+    /**
+     * Events of every day the calendar can currently show, indexed by epoch day.
+     *
+     * The queried range is the visible month grid plus the selected day, so navigating to another
+     * month keeps the selected day's list loaded while the index stays bounded.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val eventsByDay: StateFlow<Map<Long, List<Event>>> =
+        combine(mutableDisplayedMonth, mutableSelectedDate) { month, date ->
+            val grid = monthGridRange(month)
+            val day = date.toEpochDay()
+            minOf(grid.first, day)..maxOf(grid.last, day)
+        }
+            // Selecting another day inside the loaded grid keeps the same range; do not resubscribe
+            // the database query (and drop the derived map) for an unchanged range.
+            .distinctUntilChanged()
+            .flatMapLatest { range ->
+                eventDao.observeBetween(range.first, range.last)
+                    .map { events -> events to range }
+            }
+            .map { (events, range) -> buildEventsByDay(events, range) }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val alarms: StateFlow<List<Alarm>> = alarmDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -68,9 +106,6 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    var selectedDate: LocalDate by mutableStateOf(LocalDate.now())
-        private set
-
     var viewMode: ViewMode by mutableStateOf(ViewMode.MONTH)
 
     /** One-shot message for a failed write; the screen shows it and calls [consumeError]. */
@@ -82,13 +117,29 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun selectDate(date: LocalDate) {
-        selectedDate = date
+        // Re-selecting the current day must keep the month the user navigated to, so the month
+        // only follows an actual selection change.
+        if (mutableSelectedDate.value == date) return
+        mutableSelectedDate.value = date
+        mutableDisplayedMonth.value = YearMonth.from(date)
+    }
+
+    fun showMonth(month: YearMonth) {
+        mutableDisplayedMonth.value = month
+    }
+
+    fun selectToday() {
+        val today = LocalDate.now()
+        mutableSelectedDate.value = today
+        mutableDisplayedMonth.value = YearMonth.from(today)
     }
 
     private fun launchWrite(block: suspend () -> Unit) {
         viewModelScope.launch {
             try {
-                block()
+                // Room work and AlarmManager effects both leave the main thread here; only the
+                // final result and error reporting return to the ViewModel's Main context.
+                withContext(Dispatchers.IO) { block() }
             } catch (error: ScheduleLimitException) {
                 reportError(error)
             } catch (error: CancellationException) {
@@ -118,6 +169,8 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     }
 
     suspend fun getEventOnce(id: Long): Event? = eventDao.getById(id)
+
+    suspend fun getSeriesEvents(seriesId: Long): List<Event> = eventDao.getBySeries(seriesId)
 
     fun addEvent(
         title: String,
@@ -200,4 +253,46 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         EventSeriesScope.THIS_AND_SUBSEQUENT -> EventScope.THIS_AND_SUBSEQUENT
         EventSeriesScope.ENTIRE_SERIES -> EventScope.ENTIRE_SERIES
     }
+}
+
+/** Epoch days of [month]'s Monday-first grid, including leading and trailing days. */
+internal fun monthGridRange(month: YearMonth): LongRange {
+    val firstOfMonth = month.atDay(1)
+    val gridStart = firstOfMonth.minusDays((firstOfMonth.dayOfWeek.value - 1).toLong())
+    // Most months need five rows, some six.
+    val weekRows = (((month.atEndOfMonth().toEpochDay() - gridStart.toEpochDay()) / 7) + 1)
+        .coerceAtLeast(5L)
+    val start = gridStart.toEpochDay()
+    return start until start + weekRows * 7
+}
+
+/**
+ * Expands [events] over every day they cover inside [range] and sorts each day's list with the
+ * month and day view order.
+ */
+internal fun buildEventsByDay(events: List<Event>, range: LongRange): Map<Long, List<Event>> {
+    if (events.isEmpty()) return emptyMap()
+    val byDay = HashMap<Long, MutableList<Event>>()
+    events.forEach { event ->
+        var day = maxOf(event.date, range.first)
+        val lastDay = minOf(event.lastCoveredEpochDay, range.last)
+        while (day <= lastDay) {
+            byDay.getOrPut(day) { mutableListOf() } += event
+            day++
+        }
+    }
+    return byDay.mapValues { (day, dayEvents) -> dayEvents.sortedWith(eventDayComparator(day)) }
+}
+
+/** Day order used by the month and day views: all-day first, then start, then title. */
+internal fun eventDayComparator(epochDay: Long): Comparator<Event> =
+    compareByDescending<Event> { it.allDay }
+        .thenBy { eventStartOnDay(it, epochDay) }
+        .thenBy { it.title }
+
+/** Start second shown for [event] on [epochDay]; the tail of a cross-day event starts at 00:00. */
+internal fun eventStartOnDay(event: Event, epochDay: Long): Int {
+    if (event.allDay) return 0
+    val daySeconds = ((epochDay - event.date) * Event.SECONDS_PER_DAY).toInt()
+    return (event.start - daySeconds).coerceAtLeast(0)
 }

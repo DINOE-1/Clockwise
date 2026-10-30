@@ -11,6 +11,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -101,12 +103,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dinoe.clockwise.R
+import com.dinoe.clockwise.ai.EventRecurrencePlanner
+import com.dinoe.clockwise.ai.RecurrenceDraftIssue
 import com.dinoe.clockwise.data.Event
 import com.dinoe.clockwise.data.MAX_OCCURRENCES_PER_SERIES
 import com.dinoe.clockwise.data.MAX_TAGS_PER_ITEM
 import com.dinoe.clockwise.data.RecurrenceRule
 import com.dinoe.clockwise.data.Tag
-import com.dinoe.clockwise.data.planRecurrence
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.YearMonth
@@ -123,13 +126,17 @@ fun CalendarScreen(
     pendingEventId: Long? = null,
     onPendingEventConsumed: () -> Unit = {},
 ) {
-    val events by viewModel.allEvents.collectAsStateWithLifecycle()
+    val eventsByDay by viewModel.eventsByDay.collectAsStateWithLifecycle()
     val alarms by viewModel.alarms.collectAsStateWithLifecycle()
     val allTags by viewModel.allTags.collectAsStateWithLifecycle()
     val eventTagMap by viewModel.eventTagMap.collectAsStateWithLifecycle()
     val snapInterval by viewModel.snapInterval.collectAsStateWithLifecycle()
     val timePickerStyle by viewModel.timePickerStyle.collectAsStateWithLifecycle()
-    val selectedDate = viewModel.selectedDate
+    val displayedMonth by viewModel.displayedMonth.collectAsStateWithLifecycle()
+    val selectedDate by viewModel.selectedDate.collectAsStateWithLifecycle()
+    val selectedDayEvents = remember(eventsByDay, selectedDate) {
+        eventsByDay[selectedDate.toEpochDay()].orEmpty()
+    }
     val viewMode = viewModel.viewMode
     val errorMessage = viewModel.errorMessage
     val snackbarHostState = remember { SnackbarHostState() }
@@ -190,10 +197,13 @@ fun CalendarScreen(
         val contentModifier = Modifier.padding(innerPadding)
         when (viewMode) {
             ViewMode.MONTH -> MonthView(
+                displayedMonth = displayedMonth,
                 selectedDate = selectedDate,
-                events = events,
+                eventsByDay = eventsByDay,
                 eventTags = eventTagMap,
                 onDaySelected = viewModel::selectDate,
+                onMonthChange = viewModel::showMonth,
+                onToday = viewModel::selectToday,
                 onDayAddRequested = { date ->
                     viewModel.selectDate(date)
                     showTimePicker = true
@@ -205,7 +215,7 @@ fun CalendarScreen(
 
             ViewMode.DAY -> DayTimelineView(
                 date = selectedDate,
-                events = events.filter { it.occursOn(selectedDate.toEpochDay()) },
+                events = selectedDayEvents,
                 eventTags = eventTagMap,
                 modifier = contentModifier,
             )
@@ -215,7 +225,7 @@ fun CalendarScreen(
     if (showTimePicker) {
         TimeRangePickerDialog(
             date = selectedDate,
-            events = events.filter { it.occursOn(selectedDate.toEpochDay()) },
+            events = selectedDayEvents,
             eventTags = eventTagMap,
             snapMinutes = snapInterval,
             onDismiss = { showTimePicker = false },
@@ -292,71 +302,80 @@ fun CalendarScreen(
 
     eventToDelete?.let { event ->
         val isSeries = event.seriesId != 0L
-        val seriesMembers = remember(event.id, events) {
-            if (isSeries) events.filter { it.seriesId == event.seriesId } else emptyList()
+        // Series siblings can lie outside the loaded calendar range, so they are read once here.
+        var seriesMembers by remember(event.id) { mutableStateOf<List<Event>?>(null) }
+        LaunchedEffect(event.id) {
+            if (isSeries) seriesMembers = viewModel.getSeriesEvents(event.seriesId)
         }
+        val members = seriesMembers.orEmpty()
+        val isReady = !isSeries || seriesMembers != null
         var scope by remember(event.id) { mutableStateOf(EventSeriesScope.THIS_EVENT) }
         val affectedEvents = when (scope) {
             EventSeriesScope.THIS_AND_SUBSEQUENT ->
-                seriesMembers.filter { it.occurrenceIndex >= event.occurrenceIndex }
+                members.filter { it.occurrenceIndex >= event.occurrenceIndex }
 
-            EventSeriesScope.ENTIRE_SERIES -> seriesMembers
+            EventSeriesScope.ENTIRE_SERIES -> members
             EventSeriesScope.THIS_EVENT -> listOf(event)
         }
         val hasLinkedAlarm = affectedEvents.any { candidate ->
             alarms.any { it.eventId == candidate.id }
         }
         var deleteAlarmToo by remember(event.id) { mutableStateOf(true) }
-        AlertDialog(
-            onDismissRequest = { eventToDelete = null },
-            title = { Text(stringResource(R.string.delete_event)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (isSeries && scope != EventSeriesScope.THIS_EVENT) {
-                        Text(
-                            stringResource(
-                                R.string.delete_series_confirmation,
-                                event.title,
-                                affectedEvents.size,
-                            ),
-                        )
-                    } else {
-                        Text(stringResource(R.string.delete_event_confirmation, event.title))
-                    }
-                    if (isSeries) {
-                        ScopeSelector(scope = scope, onScopeChange = { scope = it })
-                    }
-                    if (hasLinkedAlarm) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(
-                                checked = deleteAlarmToo,
-                                onCheckedChange = { deleteAlarmToo = it },
+        if (isReady) {
+            AlertDialog(
+                onDismissRequest = { eventToDelete = null },
+                title = { Text(stringResource(R.string.delete_event)) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (isSeries && scope != EventSeriesScope.THIS_EVENT) {
+                            Text(
+                                stringResource(
+                                    R.string.delete_series_confirmation,
+                                    event.title,
+                                    affectedEvents.size,
+                                ),
                             )
-                            Text(stringResource(R.string.delete_event_with_alarm))
+                        } else {
+                            Text(stringResource(R.string.delete_event_confirmation, event.title))
+                        }
+                        if (isSeries) {
+                            ScopeSelector(scope = scope, onScopeChange = { scope = it })
+                        }
+                        if (hasLinkedAlarm) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = deleteAlarmToo,
+                                    onCheckedChange = { deleteAlarmToo = it },
+                                )
+                                Text(stringResource(R.string.delete_event_with_alarm))
+                            }
                         }
                     }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.deleteEventScoped(
-                            event = event,
-                            scope = if (isSeries) scope else EventSeriesScope.THIS_EVENT,
-                            deleteAlarm = deleteAlarmToo && hasLinkedAlarm,
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteEventScoped(
+                                event = event,
+                                scope = if (isSeries) scope else EventSeriesScope.THIS_EVENT,
+                                deleteAlarm = deleteAlarmToo && hasLinkedAlarm,
+                            )
+                            eventToDelete = null
+                        },
+                    ) {
+                        Text(
+                            stringResource(R.string.delete),
+                            color = MaterialTheme.colorScheme.error,
                         )
-                        eventToDelete = null
-                    },
-                ) {
-                    Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { eventToDelete = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { eventToDelete = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -384,49 +403,22 @@ private fun CalendarTopBar(viewMode: ViewMode, onViewModeChange: (ViewMode) -> U
 
 @Composable
 private fun MonthView(
+    displayedMonth: YearMonth,
     selectedDate: LocalDate,
-    events: List<Event>,
+    eventsByDay: Map<Long, List<Event>>,
     eventTags: Map<Long, List<Tag>>,
     onDaySelected: (LocalDate) -> Unit,
+    onMonthChange: (YearMonth) -> Unit,
+    onToday: () -> Unit,
     onDayAddRequested: (LocalDate) -> Unit,
     onEditRequested: (Event) -> Unit,
     onDeleteRequested: (Event) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var displayedMonth by remember { mutableStateOf(YearMonth.from(selectedDate)) }
-    LaunchedEffect(selectedDate) { displayedMonth = YearMonth.from(selectedDate) }
-
     val today = LocalDate.now()
-    val eventsByDay = remember(events) {
-        val byDay = mutableMapOf<Long, MutableList<Event>>()
-        events.forEach { event ->
-            var day = event.date
-            val lastDay = event.lastCoveredEpochDay
-            while (day <= lastDay) {
-                byDay.getOrPut(day) { mutableListOf() } += event
-                day++
-            }
-        }
-        byDay.mapValues { (day, dayEvents) ->
-            dayEvents.sortedWith(
-                compareByDescending<Event> { it.allDay }
-                    .thenBy { eventStartOnDay(it, day) }
-                    .thenBy { it.title },
-            )
-        }
-    }
-    val firstOfMonth = displayedMonth.atDay(1)
-    val lastOfMonth = displayedMonth.atEndOfMonth()
-    val gridStart = firstOfMonth.minusDays((firstOfMonth.dayOfWeek.value - 1).toLong())
-    // Monday-first grid ending on a Sunday. Most months need five rows, some six.
-    val weekRows = (((lastOfMonth.toEpochDay() - gridStart.toEpochDay()) / 7) + 1)
-        .toInt()
-        .coerceAtLeast(5)
-
-    val showToday: () -> Unit = {
-        displayedMonth = YearMonth.from(today)
-        onDaySelected(today)
-    }
+    val gridRange = monthGridRange(displayedMonth)
+    val gridStart = LocalDate.ofEpochDay(gridRange.first)
+    val weekRows = ((gridRange.last - gridRange.first + 1) / 7).toInt()
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         // Landscape phones have too little height for square cells plus the day list. Split the
@@ -436,9 +428,9 @@ private fun MonthView(
                 Column(modifier = Modifier.weight(1.25f).fillMaxHeight()) {
                     MonthHeader(
                         month = displayedMonth,
-                        onPrevious = { displayedMonth = displayedMonth.minusMonths(1) },
-                        onNext = { displayedMonth = displayedMonth.plusMonths(1) },
-                        onToday = showToday,
+                        onPrevious = { onMonthChange(displayedMonth.minusMonths(1)) },
+                        onNext = { onMonthChange(displayedMonth.plusMonths(1)) },
+                        onToday = onToday,
                     )
                     WeekdayHeader()
                     MonthGrid(
@@ -471,9 +463,9 @@ private fun MonthView(
             Column(modifier = Modifier.fillMaxSize()) {
                 MonthHeader(
                     month = displayedMonth,
-                    onPrevious = { displayedMonth = displayedMonth.minusMonths(1) },
-                    onNext = { displayedMonth = displayedMonth.plusMonths(1) },
-                    onToday = showToday,
+                    onPrevious = { onMonthChange(displayedMonth.minusMonths(1)) },
+                    onNext = { onMonthChange(displayedMonth.plusMonths(1)) },
+                    onToday = onToday,
                 )
                 WeekdayHeader()
                 MonthGrid(
@@ -705,6 +697,8 @@ private fun DayCell(
             append(", ").append(eventsLabel)
         }
     }
+    val currentOnClick by rememberUpdatedState(onClick)
+    val currentOnDoubleClick by rememberUpdatedState(onDoubleClick)
     Box(
         modifier = modifier
             .then(if (square) Modifier.aspectRatio(1f) else Modifier)
@@ -717,7 +711,25 @@ private fun DayCell(
                 },
             )
             .semantics(mergeDescendants = true) { contentDescription = description }
-            .combinedClickable(onClick = onClick, onDoubleClick = onDoubleClick),
+            // clickable has no single-tap delay. Select immediately on the first pointer-down and
+            // detect the second tap ourselves, so a quick tap on another day cannot be reverted by
+            // a delayed click from the previously selected cell.
+            .pointerInput(date) {
+                var lastDownMillis = 0L
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    if (lastDownMillis != 0L &&
+                        down.uptimeMillis - lastDownMillis <= viewConfiguration.doubleTapTimeoutMillis
+                    ) {
+                        lastDownMillis = 0L
+                        currentOnDoubleClick()
+                    } else {
+                        lastDownMillis = down.uptimeMillis
+                        currentOnClick()
+                    }
+                }
+            }
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -764,13 +776,6 @@ private fun timelineInstance(event: Event, epochDay: Long): TimelineInstance? {
     val rawEnd = if (event.hasEndTime) event.end else event.start
     val end = (rawEnd - daySeconds).coerceIn(start, Event.SECONDS_PER_DAY)
     return TimelineInstance(event, start, end)
-}
-
-/** Start second shown for [event] on [epochDay]; the tail of a cross-day event starts at 00:00. */
-private fun eventStartOnDay(event: Event, epochDay: Long): Int {
-    if (event.allDay) return 0
-    val daySeconds = ((epochDay - event.date) * Event.SECONDS_PER_DAY).toInt()
-    return (event.start - daySeconds).coerceAtLeast(0)
 }
 
 private enum class TimelineDragMode { MOVE, RESIZE_START, RESIZE_END }
@@ -1531,25 +1536,37 @@ private fun AddEventDialog(
             else -> selectedTagIds
         }
     }
+    val repeatDays = repeatDayIds.map { it.toInt() }.toSet()
     val repeatRule = RecurrenceRule(
         type = repeatType,
-        days = repeatDayIds.map { it.toInt() }.toSet(),
+        days = repeatDays,
         untilEpochDay = repeatUntilEpochDay,
     )
-    val repeatPlan = if (repeatType == Event.REPEAT_NONE) {
-        null
-    } else {
-        planRecurrence(date, repeatRule)
+    val (repeatPlan, recurrenceIssue) = remember(
+        date.toEpochDay(),
+        repeatType,
+        repeatDayIds.toList(),
+        repeatUntilEpochDay,
+    ) {
+        val plan = EventRecurrencePlanner.planOrNull(
+            date = date,
+            type = repeatType,
+            days = repeatDays,
+            untilEpochDay = repeatUntilEpochDay,
+        )
+        plan to EventRecurrencePlanner.issue(
+            date = date,
+            type = repeatType,
+            days = repeatDays,
+            untilEpochDay = repeatUntilEpochDay,
+            requireWeekdayMatch = false,
+            planned = plan,
+        )
     }
-    val isRepeatUntilValid = repeatType == Event.REPEAT_NONE ||
-        repeatUntilEpochDay > date.toEpochDay()
-    val isRepeatDaysValid = repeatType != Event.REPEAT_WEEKLY || repeatDayIds.isNotEmpty()
-    val isRepeatSizeValid = repeatPlan?.limitReached != true
     val endDayOffset = (endDateEpochDay - date.toEpochDay()).toInt().coerceAtLeast(0)
     val isTimeRangeValid = allDay || !hasEndTime ||
         endDayOffset > 0 || endSeconds > startSeconds
-    val isValid = title.isNotBlank() && isRepeatUntilValid &&
-        isRepeatDaysValid && isRepeatSizeValid && isTimeRangeValid
+    val isValid = title.isNotBlank() && recurrenceIssue == null && isTimeRangeValid
     val occurrenceCount = repeatPlan?.totalOccurrences ?: 1
     val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
     val untilDateFormatter = rememberLocalizedDateFormatter()
@@ -1728,14 +1745,14 @@ private fun AddEventDialog(
                                 )
                             }
                         }
-                        when {
-                            !isRepeatUntilValid -> Text(
+                        when (recurrenceIssue) {
+                            RecurrenceDraftIssue.UNTIL_INVALID -> Text(
                                 text = stringResource(R.string.repeat_until_invalid),
                                 color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall,
                             )
 
-                            !isRepeatSizeValid -> Text(
+                            RecurrenceDraftIssue.TOO_MANY_OCCURRENCES -> Text(
                                 text = stringResource(
                                     R.string.recurrence_too_large,
                                     MAX_OCCURRENCES_PER_SERIES,

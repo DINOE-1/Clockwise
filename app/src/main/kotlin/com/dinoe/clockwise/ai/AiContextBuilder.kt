@@ -75,8 +75,7 @@ class AiContextBuilder {
             )
         }
 
-        val estimated = estimateMessages(messages) +
-            (toolDefinitions?.let { AiTokenBudget.estimateTokens(it.toString()) } ?: 0)
+        val estimated = estimateMessages(messages) + toolDefinitionTokens(toolDefinitions)
         val hardInputTokens = AiTokenBudget.inputBudgetFor(modelContextLength)
         if (estimated > hardInputTokens) {
             throw AiContextOverflowException(estimated, hardInputTokens)
@@ -129,6 +128,13 @@ class AiContextBuilder {
         }
     }
 
+    /** Tool schemas are immutable, so the default definitions reuse the cached token estimate. */
+    private fun toolDefinitionTokens(toolDefinitions: JsonArray?): Int = when {
+        toolDefinitions == null -> 0
+        toolDefinitions === AiTools.definitions -> AiTools.definitionTokens
+        else -> AiTokenBudget.estimateTokens(toolDefinitions.toString())
+    }
+
     fun estimateTurn(turn: CompletedTurn): Int =
         AiTokenBudget.estimateMessageTokens(turn.user) +
             AiTokenBudget.estimateMessageTokens(turn.assistant) +
@@ -144,5 +150,15 @@ class AiContextBuilder {
                 } + AiTokenBudget.estimateTokens(message.reasoningContent),
                 imageCount = message.images.size,
             )
+        }
+
+    /** Estimated tokens spent on tool result payloads already appended to a turn. */
+    fun estimateToolResultTokens(messages: List<ChatMessage>): Int =
+        messages.sumOf { message ->
+            if (message.role == ChatRole.TOOL) {
+                AiTokenBudget.estimateTokens(message.content)
+            } else {
+                0
+            }
         }
 }

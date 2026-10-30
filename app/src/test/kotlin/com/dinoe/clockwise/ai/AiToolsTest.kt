@@ -41,6 +41,15 @@ class AiToolsTest {
     }
 
     @Test
+    fun cachedDefinitionSerializationMatchesTheSchema() {
+        assertEquals(AiTools.definitions.toString(), AiTools.definitionsJson)
+        assertEquals(
+            AiTokenBudget.estimateTokens(AiTools.definitionsJson),
+            AiTools.definitionTokens,
+        )
+    }
+
+    @Test
     fun writeToolSetMatchesDefinitions() {
         assertEquals(
             setOf(

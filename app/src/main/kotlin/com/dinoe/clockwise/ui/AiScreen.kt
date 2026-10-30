@@ -1,12 +1,11 @@
 package com.dinoe.clockwise.ui
 
-import android.graphics.BitmapFactory
-import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -61,13 +60,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -79,6 +78,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dinoe.clockwise.R
 import com.dinoe.clockwise.ai.AiChatItem
+import com.dinoe.clockwise.ai.AiTokenBudget
 import com.dinoe.clockwise.ai.AlarmDeleteDraft
 import com.dinoe.clockwise.ai.AlarmDraft
 import com.dinoe.clockwise.ai.AlarmStackDraft
@@ -125,7 +125,10 @@ fun AiScreen(
         stringResource(R.string.ai_subtitle_unconfigured)
     }
     val messages = viewModel.items
-    val imagePreview = rememberBase64Image(viewModel.pendingImage?.previewBase64)
+    val pendingPreview = rememberChatThumbnail(
+        cache = viewModel.thumbnails,
+        base64 = viewModel.pendingImage?.previewBase64,
+    )
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri -> uri?.let(viewModel::attachImage) }
@@ -200,17 +203,16 @@ fun AiScreen(
         },
         bottomBar = {
             AiInputBar(
-                value = viewModel.input,
-                onValueChange = viewModel::updateInput,
-                canSend = viewModel.canSend,
+                resetKey = viewModel.inputResetKey,
                 isBusy = viewModel.isBusy,
                 pendingProposal = viewModel.hasPendingProposal,
                 enabled = active?.hasKey == true &&
                     !viewModel.hasPendingProposal &&
                     !viewModel.isBusy &&
                     !viewModel.isRestoring,
-                imagePreview = imagePreview,
-                imageLoading = viewModel.isImageLoading,
+                hasPendingImage = viewModel.pendingImage != null,
+                imagePreview = pendingPreview.bitmapOrNull,
+                imageLoading = viewModel.isImageLoading || pendingPreview.isLoading,
                 onAttach = {
                     if (active?.modelSupportsImages == false) {
                         viewModel.showImageUnsupported()
@@ -247,10 +249,7 @@ fun AiScreen(
                 EmptyState(
                     needsSetup = viewModel.needsSetup,
                     onOpenSettings = onOpenSettings,
-                    onExample = { text ->
-                        viewModel.updateInput(text)
-                        viewModel.send()
-                    },
+                    onExample = { text -> viewModel.send(text) },
                     modifier = Modifier.weight(1f),
                 )
             } else {
@@ -269,7 +268,11 @@ fun AiScreen(
                 ) {
                     items(messages, key = { it.id }) { item ->
                         when (item) {
-                            is AiChatItem.User -> UserMessage(item.text, item.image)
+                            is AiChatItem.User -> UserMessage(
+                                text = item.text,
+                                image = item.image,
+                                thumbnails = viewModel.thumbnails,
+                            )
                             is AiChatItem.Assistant -> AssistantMessage(item.text)
                             is AiChatItem.Notice -> NoticeMessage(item.text)
                             is AiChatItem.Error -> ErrorMessage(
@@ -459,8 +462,9 @@ private fun EmptyState(
 }
 
 @Composable
-private fun UserMessage(text: String, image: String?) {
-    val bitmap = rememberBase64Image(image)
+private fun UserMessage(text: String, image: String?, thumbnails: ChatThumbnailCache) {
+    val thumbnail = rememberChatThumbnail(cache = thumbnails, base64 = image)
+    val bitmap = thumbnail.bitmapOrNull
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
@@ -483,6 +487,8 @@ private fun UserMessage(text: String, image: String?) {
                             .clip(RoundedCornerShape(14.dp)),
                         contentScale = ContentScale.Fit,
                     )
+                } else if (thumbnail.isLoading) {
+                    ThumbnailPlaceholder()
                 }
                 if (text.isNotBlank()) {
                     Text(
@@ -494,6 +500,21 @@ private fun UserMessage(text: String, image: String?) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ThumbnailPlaceholder() {
+    Box(
+        modifier = Modifier
+            .padding(start = 6.dp, top = 6.dp, end = 6.dp)
+            .width(168.dp)
+            .height(120.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
     }
 }
 
@@ -1336,19 +1357,24 @@ private fun reminderLabel(minutes: Int): String =
 
 @Composable
 private fun AiInputBar(
-    value: String,
-    onValueChange: (String) -> Unit,
-    canSend: Boolean,
+    resetKey: Int,
     isBusy: Boolean,
     pendingProposal: Boolean,
     enabled: Boolean,
+    hasPendingImage: Boolean,
     imagePreview: ImageBitmap?,
     imageLoading: Boolean,
     onAttach: () -> Unit,
     onRemoveImage: () -> Unit,
-    onSend: () -> Unit,
+    onSend: (String) -> Unit,
     onStop: () -> Unit,
 ) {
+    var text by rememberSaveable(resetKey) { mutableStateOf("") }
+    val canSend = (text.isNotBlank() || hasPendingImage) &&
+        enabled &&
+        !isBusy &&
+        !imageLoading &&
+        !pendingProposal
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 3.dp,
@@ -1378,8 +1404,8 @@ private fun AiInputBar(
                     )
                 }
                 OutlinedTextField(
-                    value = value,
-                    onValueChange = onValueChange,
+                    value = text,
+                    onValueChange = { text = it.take(AiTokenBudget.MAX_USER_CHARS) },
                     modifier = Modifier.weight(1f),
                     enabled = enabled,
                     placeholder = {
@@ -1398,7 +1424,15 @@ private fun AiInputBar(
                 )
                 Spacer(modifier = Modifier.size(8.dp))
                 FilledIconButton(
-                    onClick = if (isBusy) onStop else onSend,
+                    onClick = if (isBusy) {
+                        onStop
+                    } else {
+                        {
+                            val typed = text
+                            text = ""
+                            onSend(typed)
+                        }
+                    },
                     enabled = if (isBusy) !pendingProposal else canSend,
                     modifier = Modifier.size(48.dp),
                 ) {
@@ -1465,17 +1499,6 @@ private fun AttachmentPreview(
         }
     }
 }
-
-@Composable
-private fun rememberBase64Image(base64: String?): ImageBitmap? =
-    remember(base64) {
-        base64?.let { encoded ->
-            runCatching {
-                val bytes = Base64.decode(encoded, Base64.DEFAULT)
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-            }.getOrNull()
-        }
-    }
 
 @Composable
 private fun SessionsDialog(

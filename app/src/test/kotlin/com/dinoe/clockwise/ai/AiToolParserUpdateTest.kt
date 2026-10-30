@@ -222,6 +222,37 @@ class AiToolParserUpdateTest {
     }
 
     @Test
+    fun expandsScopeOverTheLoadedSubsetOnly() {
+        // The view model loads referenced events plus their series, never the whole table.
+        val subsetParser = AiToolParser(
+            now = now,
+            availableTags = tagMap,
+            eventsById = mapOf(201L to series[1], 202L to series[2]),
+        )
+        val update = subsetParser.parseEventUpdates(
+            """{"events":[{"id":201,"scope":"entire_series","title":"Renamed"}]}""",
+        ).single()
+        assertEquals(EventScope.ENTIRE_SERIES, update.scope)
+        assertEquals(2, update.affectedCount)
+        assertFalse(update.previousWithAlarm)
+    }
+
+    @Test
+    fun countsLinkedAlarmsFromTheLoadedSubsetIndex() {
+        val subsetParser = AiToolParser(
+            now = now,
+            availableTags = tagMap,
+            alarmsById = mapOf(500L to Alarm(id = 500, time = 9 * 3600, eventId = 201)),
+            eventsById = mapOf(200L to series[0], 201L to series[1]),
+        )
+        val delete = subsetParser.parseEventDeletes(
+            """{"events":[{"id":200,"scope":"this_and_subsequent"}]}""",
+        ).single()
+        assertEquals(2, delete.affectedCount)
+        assertEquals(1, delete.linkedAlarms)
+    }
+
+    @Test
     fun rejectsInvalidEventTimeRange() {
         val error = expectFailure {
             parser.parseEventUpdates(

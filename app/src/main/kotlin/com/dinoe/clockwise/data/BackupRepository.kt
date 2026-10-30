@@ -1,26 +1,25 @@
 package com.dinoe.clockwise.data
 
 import android.content.Context
+import android.util.Log
 import androidx.room.withTransaction
 import com.dinoe.clockwise.ClockwiseApp
 import com.dinoe.clockwise.alarm.AlarmScheduler
+import com.dinoe.clockwise.alarm.ReminderRestorationTrigger
 import com.dinoe.clockwise.alarm.ReminderScheduler
 import com.dinoe.clockwise.alarm.ScheduleResult
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.time.LocalDate
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
-import java.time.LocalDate
 
 data class BackupImportResult(
     val events: Int,
@@ -31,6 +30,41 @@ data class BackupImportResult(
 )
 
 class BackupException(message: String) : Exception(message)
+
+/**
+ * A backup input is rejected before it is decoded or parsed once its byte count exceeds the limit.
+ * One character is at least one UTF-8 byte, so the character count of an already decoded document is
+ * a safe upper bound as well.
+ */
+internal fun backupInputTooLarge(
+    byteCount: Long,
+    limitBytes: Long = BackupRepository.MAX_BACKUP_BYTES,
+): Boolean = byteCount > limitBytes
+
+internal fun backupTooLargeError(): BackupException = BackupException(
+    "The backup file is larger than ${BackupRepository.MAX_BACKUP_BYTES / BYTES_PER_MEGABYTE} MB",
+)
+
+/** Buffers [input] as UTF-8 text, refusing to hold more than [limitBytes]. */
+internal fun readBoundedBackupText(
+    input: InputStream,
+    limitBytes: Long = BackupRepository.MAX_BACKUP_BYTES,
+): String {
+    val bytes = ByteArrayOutputStream()
+    val buffer = ByteArray(READ_BUFFER_BYTES)
+    var total = 0L
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        total += read
+        if (total > limitBytes) throw backupTooLargeError()
+        bytes.write(buffer, 0, read)
+    }
+    return bytes.toString(Charsets.UTF_8.name())
+}
+
+private const val BYTES_PER_MEGABYTE = 1024L * 1024L
+private const val READ_BUFFER_BYTES = 8 * 1024
 
 /**
  * Versioned JSON export/import for user-visible data. AI chat sessions and the API key are never
@@ -44,88 +78,39 @@ class BackupRepository(context: Context) {
     private val tagDao = database.tagDao()
     private val json = Json { prettyPrint = true }
 
-    suspend fun exportJson(): String {
+    /** Streams the backup document into [output]; only one row is encoded at a time. */
+    suspend fun exportJson(output: OutputStream) {
         val events = eventDao.getAll()
         val alarms = alarmDao.getAll()
         val tags = tagDao.getAll()
         val eventTags = tagDao.getEventTagRefs()
         val alarmTags = tagDao.getAlarmTagRefs()
-        return buildJsonObject {
-            put("schemaVersion", SCHEMA_VERSION)
-            put("exportedAt", System.currentTimeMillis())
-            putJsonArray("events") {
-                events.forEach { event ->
-                    add(
-                        buildJsonObject {
-                            put("id", event.id)
-                            put("title", event.title)
-                            put("note", event.note)
-                            put("date", event.date)
-                            put("start", event.start)
-                            put("end", event.end)
-                            put("seriesId", event.seriesId)
-                            put("occurrenceIndex", event.occurrenceIndex)
-                            put("repeatType", event.repeatType)
-                            put("repeatDays", event.repeatDays)
-                            put("reminderMinutes", event.reminderMinutes)
-                            put("allDay", event.allDay)
-                        },
-                    )
-                }
-            }
-            putJsonArray("alarms") {
-                alarms.forEach { alarm ->
-                    add(
-                        buildJsonObject {
-                            put("id", alarm.id)
-                            put("time", alarm.time)
-                            put("enabled", alarm.enabled)
-                            alarm.fireDate?.let { put("fireDate", it) }
-                            alarm.eventId?.let { put("eventId", it) }
-                            put("name", alarm.name)
-                            put("note", alarm.note)
-                            put("oneTime", alarm.oneTime)
-                            alarm.snoozedUntil?.let { put("snoozedUntil", it) }
-                            alarm.stackId?.let { put("stackId", it) }
-                        },
-                    )
-                }
-            }
-            putJsonArray("tags") {
-                tags.forEach { tag ->
-                    add(
-                        buildJsonObject {
-                            put("id", tag.id)
-                            put("name", tag.name)
-                            put("color", tag.color)
-                        },
-                    )
-                }
-            }
-            putJsonArray("eventTags") {
-                eventTags.forEach { ref ->
-                    add(
-                        buildJsonObject {
-                            put("eventId", ref.eventId)
-                            put("tagId", ref.tagId)
-                        },
-                    )
-                }
-            }
-            putJsonArray("alarmTags") {
-                alarmTags.forEach { ref ->
-                    add(
-                        buildJsonObject {
-                            put("alarmId", ref.alarmId)
-                            put("tagId", ref.tagId)
-                        },
-                    )
-                }
-            }
-        }.toString()
+        writeBackupJson(
+            output = output,
+            schemaVersion = SCHEMA_VERSION,
+            exportedAt = System.currentTimeMillis(),
+            events = events,
+            alarms = alarms,
+            tags = tags,
+            eventTags = eventTags,
+            alarmTags = alarmTags,
+        )
+    }
+
+    /**
+     * Reads a selected backup file, refusing to buffer more than [MAX_BACKUP_BYTES]. The size the
+     * provider reports is checked before the first read when it is known, so an oversized file is
+     * rejected without decoding anything.
+     */
+    fun readImportText(input: InputStream, declaredSizeBytes: Long? = null): String {
+        if (declaredSizeBytes != null && backupInputTooLarge(declaredSizeBytes)) {
+            throw backupTooLargeError()
+        }
+        return readBoundedBackupText(input)
     }
 
     suspend fun importJson(text: String): BackupImportResult {
+        if (backupInputTooLarge(text.length.toLong())) throw backupTooLargeError()
         val root = try {
             json.parseToJsonElement(text).jsonObject
         } catch (e: Exception) {
@@ -157,102 +142,31 @@ class BackupRepository(context: Context) {
         validateUniqueIds(tagRows.map { it.id }, "tag")
         validateUniqueIds(tagRows.map { it.name }, "tag name")
 
+        // Ids, series ids, and tag references are resolved before anything is written, so the rows
+        // are inserted once with their final ids instead of being updated again afterwards.
+        val rows = buildBackupImportRows(
+            tagRows = tagRows,
+            eventRows = eventRows,
+            alarmRows = alarmRows,
+            eventTagRows = eventTagRows,
+            alarmTagRows = alarmTagRows,
+        )
+
         val oldAlarms = alarmDao.getAll()
         val oldEvents = eventDao.getAll()
 
-        val imported = database.withTransaction {
+        database.withTransaction {
             tagDao.deleteAllEventTags()
             tagDao.deleteAllAlarmTags()
             alarmDao.deleteAllAlarms()
             eventDao.deleteAllEvents()
             tagDao.deleteAllTags()
 
-            val tagIdMap = mutableMapOf<Long, Long>()
-            tagRows.forEach { row ->
-                val newId = tagDao.insert(Tag(name = row.name, color = row.color))
-                tagIdMap[row.id] = newId
-            }
-
-            val eventIdMap = mutableMapOf<Long, Long>()
-            eventRows.forEach { row ->
-                val newId = eventDao.insert(
-                    Event(
-                        title = row.title,
-                        note = row.note,
-                        date = row.date,
-                        start = row.start,
-                        end = row.end,
-                        occurrenceIndex = row.occurrenceIndex,
-                        repeatType = row.repeatType,
-                        repeatDays = row.repeatDays,
-                        reminderMinutes = row.reminderMinutes,
-                        allDay = row.allDay,
-                    ),
-                )
-                eventIdMap[row.id] = newId
-            }
-            eventRows.forEach { row ->
-                val newId = eventIdMap.getValue(row.id)
-                val newSeriesId = if (row.seriesId == 0L) 0L else {
-                    eventIdMap[row.seriesId]
-                        ?: throw BackupException("Event ${row.id} references a missing series")
-                }
-                eventDao.update(
-                    Event(
-                        id = newId,
-                        title = row.title,
-                        note = row.note,
-                        date = row.date,
-                        start = row.start,
-                        end = row.end,
-                        seriesId = newSeriesId,
-                        occurrenceIndex = row.occurrenceIndex,
-                        repeatType = row.repeatType,
-                        repeatDays = row.repeatDays,
-                        reminderMinutes = row.reminderMinutes,
-                        allDay = row.allDay,
-                    ),
-                )
-            }
-
-            eventTagRows.forEach { ref ->
-                val eventId = eventIdMap[ref.eventId]
-                    ?: throw BackupException("Tag reference points to a missing event")
-                val tagId = tagIdMap[ref.tagId]
-                    ?: throw BackupException("Tag reference points to a missing tag")
-                tagDao.insertEventTags(listOf(EventTagCrossRef(eventId, tagId)))
-            }
-
-            val alarmIdMap = mutableMapOf<Long, Long>()
-            alarmRows.forEach { row ->
-                val eventId = row.eventId?.let { old ->
-                    eventIdMap[old]
-                        ?: throw BackupException("Alarm ${row.id} points to a missing event")
-                }
-                val newId = alarmDao.insert(
-                    Alarm(
-                        time = row.time,
-                        enabled = row.enabled,
-                        fireDate = row.fireDate,
-                        eventId = eventId,
-                        name = row.name,
-                        note = row.note,
-                        snoozedUntil = null,
-                        oneTime = row.oneTime,
-                        stackId = row.stackId,
-                    ),
-                )
-                alarmIdMap[row.id] = newId
-            }
-            alarmTagRows.forEach { ref ->
-                val alarmId = alarmIdMap[ref.alarmId]
-                    ?: throw BackupException("Tag reference points to a missing alarm")
-                val tagId = tagIdMap[ref.tagId]
-                    ?: throw BackupException("Tag reference points to a missing tag")
-                tagDao.insertAlarmTags(listOf(AlarmTagCrossRef(alarmId, tagId)))
-            }
-
-            Triple(eventRows.size, alarmRows.size, tagRows.size)
+            tagDao.insertAll(rows.tags)
+            eventDao.insertAll(rows.events)
+            alarmDao.insertAll(rows.alarms)
+            tagDao.insertEventTags(rows.eventTags)
+            tagDao.insertAlarmTags(rows.alarmTags)
         }
 
         // Only cancel the old system alarms after the database replacement committed; a failed
@@ -261,23 +175,27 @@ class BackupRepository(context: Context) {
         oldEvents.forEach { event -> ReminderScheduler.cancel(app, event.id) }
 
         var scheduled = 0
-        var unscheduled = 0
+        val disabled = mutableListOf<Alarm>()
         alarmDao.getEnabled().forEach { alarm ->
             when (AlarmScheduler.schedule(app, alarm)) {
                 is ScheduleResult.Scheduled -> scheduled++
-                else -> {
-                    unscheduled++
-                    alarmDao.update(alarm.copy(enabled = false, snoozedUntil = null))
-                }
+                else -> disabled += alarm.copy(enabled = false, snoozedUntil = null)
             }
         }
-        eventDao.getAll().forEach { event -> ReminderScheduler.schedule(app, event) }
+        if (disabled.isNotEmpty()) alarmDao.updateAll(disabled)
+
+        // Reminders are scheduled through the application-scoped coordinator, so the import joins a
+        // restoration that is already running instead of scanning the event table a second time.
+        app.reminderRestoration.restore(ReminderRestorationTrigger.RECOVERY).onFailure { error ->
+            Log.w(TAG, "Unable to restore event reminders after import", error)
+        }
+
         return BackupImportResult(
-            events = imported.first,
-            alarms = imported.second,
-            tags = imported.third,
+            events = rows.events.size,
+            alarms = rows.alarms.size,
+            tags = rows.tags.size,
             scheduledAlarms = scheduled,
-            unscheduledAlarms = unscheduled,
+            unscheduledAlarms = disabled.size,
         )
     }
 
@@ -404,44 +322,19 @@ class BackupRepository(context: Context) {
         }
     }
 
-    private data class BackupEvent(
-        val id: Long,
-        val title: String,
-        val note: String,
-        val date: Long,
-        val start: Int,
-        val end: Int,
-        val seriesId: Long,
-        val occurrenceIndex: Int,
-        val repeatType: Int,
-        val repeatDays: String,
-        val reminderMinutes: Int,
-        val allDay: Boolean,
-    )
-
-    private data class BackupAlarm(
-        val id: Long,
-        val time: Int,
-        val enabled: Boolean,
-        val fireDate: Long?,
-        val eventId: Long?,
-        val name: String,
-        val note: String,
-        val oneTime: Boolean,
-        val stackId: Long?,
-    )
-
-    private data class BackupTag(val id: Long, val name: String, val color: Int)
-
-    private data class BackupEventTag(val eventId: Long, val tagId: Long)
-
-    private data class BackupAlarmTag(val alarmId: Long, val tagId: Long)
-
-    private companion object {
+    internal companion object {
         const val SCHEMA_VERSION = 1L
         const val MAX_BACKUP_EVENTS = 10_000
-        const val MAX_EVENT_SECONDS = Event.MAX_EVENT_DAY_SPAN * Event.SECONDS_PER_DAY
-        val MIN_EPOCH_DAY: Long = LocalDate.of(1900, 1, 1).toEpochDay()
-        val MAX_EPOCH_DAY: Long = LocalDate.of(2200, 12, 31).toEpochDay()
+
+        /**
+         * Upper bound for one backup document. A backup with the maximum number of events stays far
+         * below it while a hostile or corrupt file cannot make the app decode an unbounded document.
+         */
+        const val MAX_BACKUP_BYTES: Long = 16L * 1024 * 1024
+
+        private const val TAG = "BackupRepository"
+        private const val MAX_EVENT_SECONDS = Event.MAX_EVENT_DAY_SPAN * Event.SECONDS_PER_DAY
+        private val MIN_EPOCH_DAY: Long = LocalDate.of(1900, 1, 1).toEpochDay()
+        private val MAX_EPOCH_DAY: Long = LocalDate.of(2200, 12, 31).toEpochDay()
     }
 }

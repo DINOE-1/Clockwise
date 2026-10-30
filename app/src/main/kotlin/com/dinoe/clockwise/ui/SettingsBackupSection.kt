@@ -49,10 +49,9 @@ fun SettingsBackupSection() {
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             val message = runCatching {
-                val json = withContext(Dispatchers.IO) { repository.exportJson() }
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri)?.use { stream ->
-                        stream.write(json.toByteArray(Charsets.UTF_8))
+                        repository.exportJson(stream)
                     } ?: error("Unable to open the selected file")
                 }
                 resources.getString(R.string.backup_export_success)
@@ -101,8 +100,13 @@ fun SettingsBackupSection() {
                         scope.launch {
                             val message = runCatching {
                                 val text = withContext(Dispatchers.IO) {
-                                    context.contentResolver.openInputStream(uri)?.use {
-                                        it.readBytes().toString(Charsets.UTF_8)
+                                    val declaredSize = runCatching {
+                                        context.contentResolver
+                                            .openFileDescriptor(uri, "r")
+                                            ?.use { it.statSize }
+                                    }.getOrNull()
+                                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                                        repository.readImportText(stream, declaredSize)
                                     } ?: error("Unable to read the selected file")
                                 }
                                 val result = withContext(Dispatchers.IO) {

@@ -225,12 +225,12 @@ class ScheduleWriter(context: Context) {
                 }
             }
 
-            occurrences.forEach { occurrence ->
-                if (selectedTags.isNotEmpty()) {
-                    tagDao.insertEventTags(
-                        selectedTags.map { EventTagCrossRef(occurrence.id, it.id) },
-                    )
-                }
+            if (selectedTags.isNotEmpty()) {
+                tagDao.insertEventTags(
+                    occurrences.flatMap { occurrence ->
+                        selectedTags.map { EventTagCrossRef(occurrence.id, it.id) }
+                    },
+                )
             }
 
             val alarms = if (alarmRequested) {
@@ -244,15 +244,17 @@ class ScheduleWriter(context: Context) {
                     )
                 }
                 val alarmIds = alarmDao.insertAll(drafts)
-                drafts.mapIndexed { index, alarm ->
-                    val created = alarm.copy(id = alarmIds[index])
-                    if (selectedTags.isNotEmpty()) {
-                        tagDao.insertAlarmTags(
-                            selectedTags.map { AlarmTagCrossRef(created.id, it.id) },
-                        )
-                    }
-                    created
+                val created = drafts.mapIndexed { index, alarm ->
+                    alarm.copy(id = alarmIds[index])
                 }
+                if (selectedTags.isNotEmpty()) {
+                    tagDao.insertAlarmTags(
+                        created.flatMap { alarm ->
+                            selectedTags.map { AlarmTagCrossRef(alarm.id, it.id) }
+                        },
+                    )
+                }
+                created
             } else {
                 emptyList()
             }
@@ -339,54 +341,30 @@ class ScheduleWriter(context: Context) {
         if (reminderMinutes != null) {
             require(isValidReminder(reminderMinutes)) { "Invalid reminder: $reminderMinutes" }
         }
-        if (scope == EventScope.THIS_EVENT) {
-            return applyMutation { effects ->
-                syncSingleEvent(
-                    event = event,
-                    title = title,
-                    note = note,
-                    date = date,
-                    start = start,
-                    end = end,
-                    withAlarm = withAlarm,
-                    tags = tags,
-                    reminderMinutes = reminderMinutes,
-                    endDayOffset = endDayOffset,
-                    allDay = allDay,
-                    effects = effects,
-                )
-            }
+        // Every covered occurrence moves by the same number of days, so the whole series edit is
+        // one relative date update.
+        val dateShift = if (scope == EventScope.ENTIRE_SERIES) {
+            0L
+        } else {
+            date.toEpochDay() - event.date
         }
-
-        val deltaDays = date.toEpochDay() - event.date
         val effects = mutableListOf<SchedulerEffect>()
-        val mutation = applyMutationMutation(effects) {
-            val targets = scopeTargets(event, scope)
-            var result = EventMutation()
-            targets.forEach { target ->
-                val targetDate = if (scope == EventScope.THIS_AND_SUBSEQUENT) {
-                    LocalDate.ofEpochDay(target.date + deltaDays)
-                } else {
-                    LocalDate.ofEpochDay(target.date)
-                }
-                result += syncSingleEvent(
-                    event = target,
-                    title = title,
-                    note = note,
-                    date = targetDate,
-                    start = start,
-                    end = end,
-                    withAlarm = withAlarm,
-                    tags = tags,
-                    reminderMinutes = reminderMinutes,
-                    endDayOffset = endDayOffset,
-                    allDay = allDay,
-                    effects = effects,
-                )
-            }
-            result
+        return applyMutationMutation(effects) {
+            syncEvents(
+                targets = scopeTargets(event, scope),
+                dateShift = dateShift,
+                title = title,
+                note = note,
+                start = start,
+                end = end,
+                withAlarm = withAlarm,
+                tags = tags,
+                reminderMinutes = reminderMinutes,
+                endDayOffset = endDayOffset,
+                allDay = allDay,
+                effects = effects,
+            )
         }
-        return mutation
     }
 
     suspend fun deleteEventScoped(
@@ -396,11 +374,35 @@ class ScheduleWriter(context: Context) {
     ): EventMutation {
         val effects = mutableListOf<SchedulerEffect>()
         return applyMutationMutation(effects) {
-            var result = EventMutation()
-            scopeTargets(event, scope).forEach { target ->
-                result += deleteSingleEvent(target, deleteAlarms, effects)
+            val targets = scopeTargets(event, scope)
+            if (targets.isEmpty()) return@applyMutationMutation EventMutation()
+            val ids = targets.map { it.id }
+            val linkedAlarms = linkedAlarmsByEventId(ids)
+            val linked = targets.mapNotNull { linkedAlarms[it.id] }
+            if (deleteAlarms) {
+                if (linked.isNotEmpty()) {
+                    tagDao.clearAlarmTagsByIds(linked.map { it.id })
+                    alarmDao.deleteByIds(linked.map { it.id })
+                }
+            } else if (linked.isNotEmpty()) {
+                // Keep the alarms as standalone alarms rather than orphans pointing at a deleted
+                // event.
+                alarmDao.detachFromEvents(linked.map { it.id })
             }
-            result
+            tagDao.clearEventTagsByIds(ids)
+            eventDao.deleteByIds(ids)
+            targets.forEach { target ->
+                effects += SchedulerEffect.CancelReminder(target)
+                if (deleteAlarms) {
+                    linkedAlarms[target.id]?.let { alarm ->
+                        effects += SchedulerEffect.Cancel(alarm)
+                    }
+                }
+            }
+            EventMutation(
+                affectedEvents = targets.size,
+                deletedAlarms = if (deleteAlarms) linked.size else 0,
+            )
         }
     }
 
@@ -462,11 +464,24 @@ class ScheduleWriter(context: Context) {
         }.sortedBy { it.occurrenceIndex }
     }
 
-    private suspend fun syncSingleEvent(
-        event: Event,
+    /** First alarm linked to each of [eventIds]; the same single alarm the per-event lookup used. */
+    private suspend fun linkedAlarmsByEventId(eventIds: List<Long>): Map<Long, Alarm> {
+        if (eventIds.isEmpty()) return emptyMap()
+        return alarmDao.getByEventIds(eventIds)
+            .groupBy { it.eventId }
+            .mapNotNull { (eventId, alarms) -> eventId?.let { it to alarms.first() } }
+            .toMap()
+    }
+
+    /**
+     * Applies one edit to every occurrence in [targets]. The rows are written with a few bulk
+     * statements, and the scheduler effects stay in occurrence order so results stay deterministic.
+     */
+    private suspend fun syncEvents(
+        targets: List<Event>,
+        dateShift: Long,
         title: String,
         note: String,
-        date: LocalDate,
         start: LocalTime,
         end: LocalTime,
         withAlarm: Boolean,
@@ -476,128 +491,126 @@ class ScheduleWriter(context: Context) {
         allDay: Boolean,
         effects: MutableList<SchedulerEffect>,
     ): EventMutation {
+        if (targets.isEmpty()) return EventMutation()
         val selectedTags = tags.take(MAX_TAGS_PER_ITEM)
-        val updatedReminder = if (allDay) {
-            Event.REMINDER_OFF
-        } else {
-            reminderMinutes ?: event.reminderMinutes
-        }
         val alarmRequested = withAlarm && !allDay
-        val updated = event.copy(
-            title = title,
-            note = note,
-            date = date.toEpochDay(),
-            start = if (allDay) 0 else start.toSecondOfDay(),
-            end = if (allDay) {
-                0
-            } else {
-                end.toSecondOfDay() + endDayOffset * Event.SECONDS_PER_DAY
-            },
-            reminderMinutes = updatedReminder,
-            allDay = allDay,
-        )
-        eventDao.update(updated)
-        effects += SchedulerEffect.CancelReminder(event)
-        if (updatedReminder != Event.REMINDER_OFF) {
-            effects += SchedulerEffect.ScheduleReminder(updated)
+        val startSeconds = if (allDay) 0 else start.toSecondOfDay()
+        val endSeconds = if (allDay) {
+            0
+        } else {
+            end.toSecondOfDay() + endDayOffset * Event.SECONDS_PER_DAY
+        }
+        val targetIds = targets.map { it.id }
+        val linkedAlarms = linkedAlarmsByEventId(targetIds)
+
+        if (alarmRequested) {
+            val newlyEnabled = targets.count { linkedAlarms[it.id]?.enabled != true }
+            if (newlyEnabled > 0) ensureAlarmCapacity(newlyEnabled)
         }
 
-        tagDao.clearEventTags(event.id)
+        // One statement per distinct reminder value; normally a single statement per series.
+        targets.groupBy { updatedReminder(it, reminderMinutes, allDay) }
+            .forEach { (reminder, group) ->
+                eventDao.updateEventFields(
+                    ids = group.map { it.id },
+                    title = title,
+                    note = note,
+                    start = startSeconds,
+                    end = endSeconds,
+                    reminderMinutes = reminder,
+                    allDay = allDay,
+                    dateShift = dateShift,
+                )
+            }
+
+        tagDao.clearEventTagsByIds(targetIds)
         if (selectedTags.isNotEmpty()) {
-            tagDao.insertEventTags(selectedTags.map { EventTagCrossRef(event.id, it.id) })
+            tagDao.insertEventTags(eventTagRefs(targetIds, selectedTags))
         }
 
-        var mutation = EventMutation(affectedEvents = 1)
-        val linkedAlarm = alarmDao.getByEventId(event.id)
-        when {
-            alarmRequested && linkedAlarm == null -> {
-                ensureAlarmCapacity(1)
-                val alarmId = alarmDao.insert(
-                    Alarm(
-                        time = updated.start,
-                        fireDate = updated.date,
-                        eventId = event.id,
+        val syncedAlarms = mutableMapOf<Long, Alarm>()
+        val createdAlarms = mutableMapOf<Long, Alarm>()
+        val removedAlarms = mutableMapOf<Long, Alarm>()
+        if (alarmRequested) {
+            val withAlarmTargets = targets.filter { linkedAlarms[it.id] != null }
+            if (withAlarmTargets.isNotEmpty()) {
+                alarmDao.syncEventAlarms(
+                    eventIds = withAlarmTargets.map { it.id },
+                    time = startSeconds,
+                    name = title,
+                    note = note,
+                )
+                withAlarmTargets.forEach { target ->
+                    syncedAlarms[target.id] = linkedAlarms.getValue(target.id).copy(
+                        time = startSeconds,
+                        fireDate = target.date + dateShift,
                         name = title,
                         note = note,
+                        enabled = true,
+                        snoozedUntil = null,
+                    )
+                }
+            }
+            val missingTargets = targets.filter { linkedAlarms[it.id] == null }
+            if (missingTargets.isNotEmpty()) {
+                val drafts = missingTargets.map { target ->
+                    Alarm(
+                        time = startSeconds,
+                        fireDate = target.date + dateShift,
+                        eventId = target.id,
+                        name = title,
+                        note = note,
+                    )
+                }
+                val alarmIds = alarmDao.insertAll(drafts)
+                drafts.forEachIndexed { index, draft ->
+                    createdAlarms[draft.eventId ?: 0L] = draft.copy(id = alarmIds[index])
+                }
+            }
+            if (syncedAlarms.isNotEmpty()) {
+                tagDao.clearAlarmTagsByIds(syncedAlarms.values.map { it.id })
+            }
+            if (selectedTags.isNotEmpty()) {
+                val alarmIds = syncedAlarms.values.map { it.id } +
+                    createdAlarms.values.map { it.id }
+                tagDao.insertAlarmTags(alarmTagRefs(alarmIds, selectedTags))
+            }
+        } else {
+            val removed = targets.mapNotNull { linkedAlarms[it.id] }
+            if (removed.isNotEmpty()) {
+                tagDao.clearAlarmTagsByIds(removed.map { it.id })
+                alarmDao.deleteByIds(removed.map { it.id })
+                removed.forEach { alarm -> alarm.eventId?.let { removedAlarms[it] = alarm } }
+            }
+        }
+
+        targets.forEach { target ->
+            effects += SchedulerEffect.CancelReminder(target)
+            val reminder = updatedReminder(target, reminderMinutes, allDay)
+            if (reminder != Event.REMINDER_OFF) {
+                effects += SchedulerEffect.ScheduleReminder(
+                    target.copy(
+                        title = title,
+                        note = note,
+                        date = target.date + dateShift,
+                        start = startSeconds,
+                        end = endSeconds,
+                        reminderMinutes = reminder,
+                        allDay = allDay,
                     ),
                 )
-                if (selectedTags.isNotEmpty()) {
-                    tagDao.insertAlarmTags(
-                        selectedTags.map { AlarmTagCrossRef(alarmId, it.id) },
-                    )
-                }
-                val created = Alarm(
-                    id = alarmId,
-                    time = updated.start,
-                    fireDate = updated.date,
-                    eventId = event.id,
-                    name = title,
-                    note = note,
-                )
-                effects += SchedulerEffect.Schedule(created)
-                mutation = mutation.copy(alarmsChanged = 1)
             }
-
-            alarmRequested && linkedAlarm != null -> {
-                if (!linkedAlarm.enabled) ensureAlarmCapacity(1)
-                val synced = linkedAlarm.copy(
-                    time = updated.start,
-                    fireDate = updated.date,
-                    name = title,
-                    note = note,
-                    enabled = true,
-                    snoozedUntil = null,
-                )
-                alarmDao.update(synced)
-                tagDao.clearAlarmTags(synced.id)
-                if (selectedTags.isNotEmpty()) {
-                    tagDao.insertAlarmTags(
-                        selectedTags.map { AlarmTagCrossRef(synced.id, it.id) },
-                    )
-                }
-                effects += SchedulerEffect.Schedule(synced)
-                mutation = mutation.copy(alarmsChanged = 1)
+            (syncedAlarms[target.id] ?: createdAlarms[target.id])?.let { alarm ->
+                effects += SchedulerEffect.Schedule(alarm)
             }
-
-            !alarmRequested && linkedAlarm != null -> {
-                effects += SchedulerEffect.Cancel(linkedAlarm)
-                tagDao.clearAlarmTags(linkedAlarm.id)
-                alarmDao.delete(linkedAlarm)
-                mutation = mutation.copy(deletedAlarms = 1)
-            }
+            removedAlarms[target.id]?.let { alarm -> effects += SchedulerEffect.Cancel(alarm) }
         }
-        return mutation
-    }
 
-    private suspend fun deleteSingleEvent(
-        event: Event,
-        deleteAlarms: Boolean,
-        effects: MutableList<SchedulerEffect>,
-    ): EventMutation {
-        var mutation = EventMutation(affectedEvents = 1)
-        effects += SchedulerEffect.CancelReminder(event)
-        alarmDao.getByEventId(event.id)?.let { alarm ->
-            if (deleteAlarms) {
-                effects += SchedulerEffect.Cancel(alarm)
-                tagDao.clearAlarmTags(alarm.id)
-                alarmDao.delete(alarm)
-                mutation = mutation.copy(deletedAlarms = 1)
-            } else {
-                // Keep the alarm as a standalone alarm rather than an orphan pointing at a
-                // deleted event.
-                alarmDao.update(alarm.copy(eventId = null))
-            }
-        }
-        tagDao.clearEventTags(event.id)
-        eventDao.delete(event)
-        return mutation
-    }
-
-    private suspend fun applyMutation(
-        block: suspend (MutableList<SchedulerEffect>) -> EventMutation,
-    ): EventMutation {
-        val effects = mutableListOf<SchedulerEffect>()
-        return applyMutationMutation(effects) { block(effects) }
+        return EventMutation(
+            affectedEvents = targets.size,
+            alarmsChanged = syncedAlarms.size + createdAlarms.size,
+            deletedAlarms = removedAlarms.size,
+        )
     }
 
     private suspend fun applyMutationMutation(
@@ -629,6 +642,15 @@ class ScheduleWriter(context: Context) {
             unscheduledAlarms = mutation.unscheduledAlarms + unscheduled,
         )
     }
+
+    private fun updatedReminder(event: Event, reminderMinutes: Int?, allDay: Boolean): Int =
+        if (allDay) Event.REMINDER_OFF else reminderMinutes ?: event.reminderMinutes
+
+    private fun eventTagRefs(eventIds: List<Long>, tags: List<Tag>): List<EventTagCrossRef> =
+        eventIds.flatMap { eventId -> tags.map { EventTagCrossRef(eventId, it.id) } }
+
+    private fun alarmTagRefs(alarmIds: List<Long>, tags: List<Tag>): List<AlarmTagCrossRef> =
+        alarmIds.flatMap { alarmId -> tags.map { AlarmTagCrossRef(alarmId, it.id) } }
 
     private fun isValidReminder(reminderMinutes: Int): Boolean =
         reminderMinutes == Event.REMINDER_OFF ||

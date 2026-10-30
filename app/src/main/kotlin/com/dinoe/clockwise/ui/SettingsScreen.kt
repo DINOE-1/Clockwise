@@ -109,7 +109,6 @@ fun SettingsScreen(
     } else {
         stringResource(R.string.ai_settings_entry_unconfigured)
     }
-    var sliderValue by remember(snapInterval) { mutableFloatStateOf(snapInterval.toFloat()) }
     val context = LocalContext.current
     var resumeCount by remember { mutableIntStateOf(0) }
     var permissionStatus by remember { mutableStateOf(AlarmPermissions.read(context)) }
@@ -244,11 +243,8 @@ fun SettingsScreen(
             SettingsSectionHeader(stringResource(R.string.settings_section_time))
             SettingsCard {
                 SnapIntervalSetting(
-                    value = sliderValue,
-                    onValueChange = { sliderValue = it },
-                    onValueChangeFinished = {
-                        viewModel.setSnapInterval(sliderValue.roundToInt())
-                    },
+                    value = snapInterval,
+                    onValueChangeFinished = { viewModel.setSnapInterval(it) },
                 )
                 SettingsDivider()
                 SegmentedPreference(
@@ -393,12 +389,13 @@ internal fun SettingsActionRow(
     }
 }
 
+// The dragged value lives here so moving the slider does not invalidate the settings page.
 @Composable
 private fun SnapIntervalSetting(
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    onValueChangeFinished: () -> Unit,
+    value: Int,
+    onValueChangeFinished: (Int) -> Unit,
 ) {
+    var sliderValue by remember(value) { mutableFloatStateOf(value.toFloat()) }
     Column(
         modifier = Modifier.padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -415,16 +412,16 @@ private fun SnapIntervalSetting(
             Text(
                 text = stringResource(
                     R.string.snap_interval_minutes,
-                    value.roundToInt(),
+                    sliderValue.roundToInt(),
                 ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
         }
         Slider(
-            value = value,
-            onValueChange = onValueChange,
-            onValueChangeFinished = onValueChangeFinished,
+            value = sliderValue,
+            onValueChange = { sliderValue = it },
+            onValueChangeFinished = { onValueChangeFinished(sliderValue.roundToInt()) },
             valueRange = MIN_SNAP_INTERVAL_MINUTES.toFloat()..MAX_SNAP_INTERVAL_MINUTES.toFloat(),
             steps = (MAX_SNAP_INTERVAL_MINUTES - MIN_SNAP_INTERVAL_MINUTES) /
                 SNAP_INTERVAL_STEP_MINUTES - 1,

@@ -9,6 +9,21 @@ class AiContextBuilderTest {
     private val builder = AiContextBuilder()
 
     @Test
+    fun countsToolResultPayloadsOfTheCurrentTurn() {
+        val messages = listOf(
+            ChatMessage(role = ChatRole.USER, content = "list my alarms"),
+            ChatMessage(role = ChatRole.ASSISTANT, content = null),
+            ChatMessage(role = ChatRole.TOOL, content = "abcdefgh", toolCallId = "call_1"),
+            ChatMessage(role = ChatRole.TOOL, content = "abcd", toolCallId = "call_2"),
+        )
+        assertEquals(
+            AiTokenBudget.estimateTokens("abcdefgh") + AiTokenBudget.estimateTokens("abcd"),
+            builder.estimateToolResultTokens(messages),
+        )
+        assertEquals(0, builder.estimateToolResultTokens(emptyList()))
+    }
+
+    @Test
     fun staticPromptAndToolsStayWithinBudget() {
         val tokens = AiTokenBudget.estimateTokens(AiPrompt.STATIC_SYSTEM_PROMPT) +
             AiTokenBudget.estimateTokens(AiTools.definitions.toString())

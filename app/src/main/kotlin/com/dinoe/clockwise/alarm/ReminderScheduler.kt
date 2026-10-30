@@ -59,15 +59,33 @@ object ReminderScheduler {
         ReminderNotifier.cancel(appContext, eventId)
     }
 
-    suspend fun rescheduleAllUpcoming(context: Context) {
+    /**
+     * Restores every reminder that is still in the future.
+     *
+     * The scan always runs through the application-scoped [ReminderRestorationCoordinator], so a
+     * request that arrives while another restoration is running joins that run instead of repeating
+     * the work.
+     */
+    suspend fun rescheduleAllUpcoming(
+        context: Context,
+        trigger: ReminderRestorationTrigger = ReminderRestorationTrigger.RECOVERY,
+    ) {
+        (context.applicationContext as ClockwiseApp).reminderRestoration.restore(trigger).getOrThrow()
+    }
+
+    /**
+     * The restoration scan itself. Only [ReminderRestorationCoordinator] calls this so that every
+     * entry point shares one serialized operation.
+     */
+    internal suspend fun restoreAllUpcomingReminders(context: Context) {
         val appContext = context.applicationContext
         val events = (appContext as ClockwiseApp).database.eventDao().getAll()
         val now = System.currentTimeMillis()
         events.forEach { event ->
             if (event.reminderMinutes == Event.REMINDER_OFF) return@forEach
             val triggerAtMillis = event.reminderTriggerMillis() ?: return@forEach
-            // Leave due or past reminders alone here so restoring after a process start cannot
-            // cancel a notification that is being delivered at this very moment.
+            // Leave due or past reminders alone so a restoration cannot cancel a notification that
+            // is being delivered at this very moment.
             if (triggerAtMillis > now) schedule(appContext, event, now)
         }
     }

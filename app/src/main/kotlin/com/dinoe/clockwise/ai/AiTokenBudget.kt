@@ -35,6 +35,9 @@ object AiTokenBudget {
     /** Conservative per-image cost for a downscaled photo, in tokens. */
     const val IMAGE_INPUT_TOKENS = 1_100
 
+    /** Smallest payload worth emitting: the JSON envelope of a tool result without items. */
+    const val MIN_TOOL_RESULT_TOKENS = 32
+
     private const val MESSAGE_OVERHEAD_TOKENS = 4
 
     fun estimateTokens(text: String?): Int {
@@ -94,6 +97,21 @@ object AiTokenBudget {
 
     fun truncateChars(text: String, maxChars: Int): String =
         if (text.length <= maxChars) text else text.take(maxChars)
+
+    /**
+     * Tokens still available for one tool result payload: the aggregate current-turn budget minus
+     * the payloads already appended to the turn, capped by the per-result limit. Never returns
+     * less than [MIN_TOOL_RESULT_TOKENS], so a tool call always gets an answerable result.
+     */
+    fun toolResultAllowance(
+        usedTokens: Int,
+        perResultLimit: Int = MAX_TOOL_RESULT_TOKENS,
+        aggregateLimit: Int = MAX_CURRENT_TOOL_TOKENS,
+    ): Int {
+        val remaining = aggregateLimit - usedTokens.coerceAtLeast(0)
+        val ceiling = perResultLimit.coerceAtLeast(MIN_TOOL_RESULT_TOKENS)
+        return remaining.coerceIn(MIN_TOOL_RESULT_TOKENS, ceiling)
+    }
 
     private fun isCjk(code: Int): Boolean =
         code in 0x2E80..0x9FFF ||

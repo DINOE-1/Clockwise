@@ -48,13 +48,12 @@ import com.dinoe.clockwise.ai.AiDraftIssue
 import com.dinoe.clockwise.ai.AlarmDraft
 import com.dinoe.clockwise.ai.AlarmStackDraft
 import com.dinoe.clockwise.ai.EventDraft
+import com.dinoe.clockwise.ai.EventRecurrencePlanner
 import com.dinoe.clockwise.ai.TagRef
 import com.dinoe.clockwise.data.Event
 import com.dinoe.clockwise.data.MAX_OCCURRENCES_PER_SERIES
 import com.dinoe.clockwise.data.MAX_TAGS_PER_ITEM
-import com.dinoe.clockwise.data.RecurrenceRule
 import com.dinoe.clockwise.data.Tag
-import com.dinoe.clockwise.data.planRecurrence
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -366,12 +365,9 @@ internal fun EventDraftEditDialog(
     val until = LocalDate.ofEpochDay(repeatUntilEpochDay)
     val selectedTags = allTags.filter { it.id in selectedTagIds }
     val repeatDays = repeatDayIds.map { it.toInt() }.toSet()
-    val rule = RecurrenceRule(
-        type = repeatType,
-        days = repeatDays,
-        untilEpochDay = repeatUntilEpochDay,
-    )
-    val plan = if (repeatType == Event.REPEAT_NONE) null else planRecurrence(date, rule)
+    val plan = remember(dateEpochDay, repeatType, repeatDayIds.toList(), repeatUntilEpochDay) {
+        EventRecurrencePlanner.planOrNull(date, repeatType, repeatDays, repeatUntilEpochDay)
+    }
     val startTime = LocalTime.ofSecondOfDay(startSeconds.toLong())
     val current = draft.copy(
         title = title,
@@ -389,7 +385,7 @@ internal fun EventDraftEditDialog(
         reminderMinutes = reminderMinutes,
         tags = tagRefs(allTags, selectedTagIds),
     )
-    val issue = AiDraftEditor.eventIssue(current, LocalDateTime.now())
+    val issue = AiDraftEditor.eventIssue(current, LocalDateTime.now(), plan)
     val dayFormatter = rememberDatePatternFormatter("MMMdEEEE")
     val weekdayLabels = rememberWeekdayLabels()
 

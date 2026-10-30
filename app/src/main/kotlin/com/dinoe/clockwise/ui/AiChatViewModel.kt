@@ -3,6 +3,7 @@ package com.dinoe.clockwise.ui
 import android.app.Application
 import android.net.Uri
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -15,12 +16,13 @@ import com.dinoe.clockwise.alarm.AlarmScheduler
 import com.dinoe.clockwise.alarm.ReminderScheduler
 import com.dinoe.clockwise.ai.AiApiException
 import com.dinoe.clockwise.ai.AiChatItem
-import com.dinoe.clockwise.ai.AiChatSessionCodec
+import com.dinoe.clockwise.ai.AiChatSessionStore
 import com.dinoe.clockwise.ai.AiConfig
 import com.dinoe.clockwise.ai.AiContextBuilder
 import com.dinoe.clockwise.ai.AiContextOverflowException
 import com.dinoe.clockwise.ai.AiDraftEditor
 import com.dinoe.clockwise.ai.AiErrorKind
+import com.dinoe.clockwise.ai.AiIdChunks
 import com.dinoe.clockwise.ai.AiImageAttachment
 import com.dinoe.clockwise.ai.AiImageProcessor
 import com.dinoe.clockwise.ai.AiPrompt
@@ -29,7 +31,10 @@ import com.dinoe.clockwise.ai.AiSessionState
 import com.dinoe.clockwise.ai.AiTokenBudget
 import com.dinoe.clockwise.ai.AiToolParseException
 import com.dinoe.clockwise.ai.AiToolParser
+import com.dinoe.clockwise.ai.AiToolPayload
+import com.dinoe.clockwise.ai.AiToolReferences
 import com.dinoe.clockwise.ai.AiTools
+import com.dinoe.clockwise.ai.AiTurnCredentials
 import com.dinoe.clockwise.ai.AiUsage
 import com.dinoe.clockwise.ai.AlarmDeleteDraft
 import com.dinoe.clockwise.ai.AlarmDraft
@@ -37,23 +42,24 @@ import com.dinoe.clockwise.ai.AlarmStackDraft
 import com.dinoe.clockwise.ai.AlarmUpdateDraft
 import com.dinoe.clockwise.ai.ChatImage
 import com.dinoe.clockwise.ai.ChatMessage
+import com.dinoe.clockwise.ai.ChatPersistenceSnapshot
 import com.dinoe.clockwise.ai.ChatRole
 import com.dinoe.clockwise.ai.ChatToolCall
 import com.dinoe.clockwise.ai.EventDeleteDraft
 import com.dinoe.clockwise.ai.EventDraft
 import com.dinoe.clockwise.ai.EventUpdateDraft
-import com.dinoe.clockwise.ai.PersistedChat
-import com.dinoe.clockwise.ai.PersistedChatMessage
 import com.dinoe.clockwise.ai.ProposalState
+import com.dinoe.clockwise.ai.ReferencedIds
+import com.dinoe.clockwise.ai.RestoredChatSession
+import com.dinoe.clockwise.ai.SessionOpenResult
 import com.dinoe.clockwise.ai.TagRef
 import com.dinoe.clockwise.data.AI_CHAT_SESSION_DEFAULT_TITLE
-import com.dinoe.clockwise.data.AI_CHAT_SESSION_MAX_COUNT
-import com.dinoe.clockwise.data.AI_CHAT_SESSION_RETENTION_MILLIS
-import com.dinoe.clockwise.data.AiChatSession
 import com.dinoe.clockwise.data.AiChatSessionSummary
 import com.dinoe.clockwise.data.Alarm
+import com.dinoe.clockwise.data.AlarmTagCrossRef
 import com.dinoe.clockwise.data.Event
 import com.dinoe.clockwise.data.EventScope
+import com.dinoe.clockwise.data.EventTagCrossRef
 import com.dinoe.clockwise.data.Tag
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -64,8 +70,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -89,11 +93,11 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     private val tagDao = app.database.tagDao()
     private val alarmDao = app.database.alarmDao()
     private val eventDao = app.database.eventDao()
-    private val chatSessionDao = app.database.chatSessionDao()
+    private val sessionStore = AiChatSessionStore(app.database.chatSessionDao())
     private val imageProcessor = AiImageProcessor(app)
     private val preferences = ThemePreferences(app)
 
-    val sessions: StateFlow<List<AiChatSessionSummary>> = chatSessionDao.observeSummaries()
+    val sessions: StateFlow<List<AiChatSessionSummary>> = sessionStore.summaries
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val allTags: StateFlow<List<Tag>> = tagDao.observeAll()
@@ -103,8 +107,6 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TimePickerStyle.WHEEL)
 
     val items = mutableStateListOf<AiChatItem>()
-    var input by mutableStateOf("")
-        private set
     var isBusy by mutableStateOf(false)
         private set
     var statusText by mutableStateOf<String?>(null)
@@ -126,6 +128,13 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     var isImageLoading by mutableStateOf(false)
         private set
 
+    /** Bumped when the open conversation changes so the input bar drops its local draft. */
+    var inputResetKey by mutableIntStateOf(0)
+        private set
+
+    /** Decoded chat thumbnails shared with the screen; entries follow the open session. */
+    val thumbnails = ChatThumbnailCache()
+
     private val chatSession = AiSessionState()
     private val contextBuilder = AiContextBuilder()
     private var currentTurn = mutableListOf<ChatMessage>()
@@ -140,18 +149,10 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     private var sessionTitle = AI_CHAT_SESSION_DEFAULT_TITLE
     private var sessionCreatedAt = System.currentTimeMillis()
     private var saveFailureNotified = false
-    private val sessionMutex = Mutex()
 
     val activeProvider: AiProviderConfig? get() = config?.active()
     val needsSetup: Boolean get() = config?.active()?.hasKey == false
     val hasPendingProposal: Boolean get() = pendingProposalId != null
-    val canSend: Boolean
-        get() = (input.isNotBlank() || pendingImage != null) &&
-            !isBusy &&
-            !isRestoring &&
-            !isImageLoading &&
-            pendingProposalId == null &&
-            config?.active()?.hasKey == true
 
     init {
         viewModelScope.launch {
@@ -160,13 +161,10 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { restoreLatestSession() }
     }
 
-    fun updateInput(value: String) {
-        input = value.take(AiTokenBudget.MAX_USER_CHARS)
-    }
-
     fun attachImage(uri: Uri) {
         if (isBusy || isRestoring || isImageLoading || pendingProposalId != null) return
         imageJob?.cancel()
+        thumbnails.evict(pendingImage?.previewBase64)
         imageJob = viewModelScope.launch {
             isImageLoading = true
             try {
@@ -184,6 +182,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
 
     fun removeImage() {
         if (isImageLoading) return
+        thumbnails.evict(pendingImage?.previewBase64)
         pendingImage = null
     }
 
@@ -191,28 +190,27 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         addNotice(app.getString(R.string.ai_image_unsupported))
     }
 
-    fun send() {
+    fun send(typed: String) {
         if (isBusy || isRestoring || isImageLoading || pendingProposalId != null) return
         val provider = activeProvider ?: return
-        val typed = input.trim()
+        val text = typed.take(AiTokenBudget.MAX_USER_CHARS).trim()
         val image = pendingImage
-        if (typed.isEmpty() && image == null) return
+        if (text.isEmpty() && image == null) return
         if (!provider.hasKey) {
             addError(app.getString(R.string.ai_error_missing_key), retryable = false)
             return
         }
-        val text = typed.ifEmpty { app.getString(R.string.ai_image_only_prompt) }
-        input = ""
+        val content = text.ifEmpty { app.getString(R.string.ai_image_only_prompt) }
         pendingImage = null
         lastErrorId = null
         trimNoticeShown = false
         readSummaryThisTurn = null
-        items += AiChatItem.User(nextItemId(), text, image?.previewBase64)
-        currentUserText = text
+        items += AiChatItem.User(nextItemId(), content, image?.previewBase64)
+        currentUserText = content
         currentTurn = mutableListOf(
             ChatMessage(
                 role = ChatRole.USER,
-                content = text,
+                content = content,
                 images = image?.let {
                     listOf(ChatImage(base64 = it.requestBase64, mimeType = it.mimeType))
                 }.orEmpty(),
@@ -333,16 +331,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
 
     fun refreshSessions() {
         viewModelScope.launch {
-            runCatching {
-                val now = System.currentTimeMillis()
-                activeSessionId?.let { id ->
-                    withContext(Dispatchers.IO) { chatSessionDao.touch(id, now) }
-                }
-                withContext(Dispatchers.IO) {
-                    chatSessionDao.deleteExpired(now - AI_CHAT_SESSION_RETENTION_MILLIS)
-                    chatSessionDao.trimTo(AI_CHAT_SESSION_MAX_COUNT)
-                }
-            }
+            runCatching { sessionStore.touchAndClean(activeSessionId) }
         }
     }
 
@@ -351,21 +340,9 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             isRestoring = true
             try {
-                val now = System.currentTimeMillis()
-                val row = withContext(Dispatchers.IO) { chatSessionDao.getById(id) }
-                if (row == null || now - row.updatedAt > AI_CHAT_SESSION_RETENTION_MILLIS) {
-                    withContext(Dispatchers.IO) {
-                        chatSessionDao.deleteById(id)
-                        chatSessionDao.trimTo(AI_CHAT_SESSION_MAX_COUNT)
-                    }
-                    return@launch
-                }
-                turnJob?.cancel()
-                turnJob = null
-                restoreFrom(row)
-                withContext(Dispatchers.IO) {
-                    chatSessionDao.touch(id, now)
-                    chatSessionDao.trimTo(AI_CHAT_SESSION_MAX_COUNT)
+                val result = sessionStore.open(id)
+                if (result is SessionOpenResult.Opened) {
+                    applyRestoredSession(result.session)
                 }
             } finally {
                 isRestoring = false
@@ -378,26 +355,11 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             isRestoring = true
             try {
-                withContext(Dispatchers.IO) { chatSessionDao.deleteById(id) }
-                if (id == activeSessionId) {
-                    val now = System.currentTimeMillis()
-                    val latest = withContext(Dispatchers.IO) {
-                        chatSessionDao.deleteExpired(
-                            now - AI_CHAT_SESSION_RETENTION_MILLIS,
-                        )
-                        chatSessionDao.trimTo(AI_CHAT_SESSION_MAX_COUNT)
-                        chatSessionDao.getLatest()
-                    }
-                    if (latest != null) {
-                        restoreFrom(latest)
-                        withContext(Dispatchers.IO) { chatSessionDao.touch(latest.id, now) }
-                    } else {
-                        startNewDraft()
-                    }
-                } else {
-                    withContext(Dispatchers.IO) {
-                        chatSessionDao.trimTo(AI_CHAT_SESSION_MAX_COUNT)
-                    }
+                val wasActive = id == activeSessionId
+                val restored = sessionStore.deleteAndReopen(id, wasActive)
+                when {
+                    restored != null -> applyRestoredSession(restored)
+                    wasActive -> startNewDraft()
                 }
             } finally {
                 isRestoring = false
@@ -411,11 +373,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         }.take(60)
         viewModelScope.launch {
             runCatching {
-                val now = System.currentTimeMillis()
-                withContext(Dispatchers.IO) {
-                    chatSessionDao.rename(id, cleaned, now)
-                    chatSessionDao.trimTo(AI_CHAT_SESSION_MAX_COUNT)
-                }
+                sessionStore.rename(id, cleaned)
                 if (id == activeSessionId) sessionTitle = cleaned
             }
         }
@@ -426,7 +384,9 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         turnJob = null
         imageJob?.cancel()
         imageJob = null
+        inputResetKey++
         pendingImage = null
+        thumbnails.clear()
         isImageLoading = false
         activeSessionId = null
         sessionTitle = AI_CHAT_SESSION_DEFAULT_TITLE
@@ -437,7 +397,6 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         currentUserText = ""
         pendingWrite = null
         pendingProposalId = null
-        input = ""
         isBusy = false
         statusText = null
         lastErrorId = null
@@ -450,14 +409,9 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun restoreLatestSession() {
         try {
-            val now = System.currentTimeMillis()
-            withContext(Dispatchers.IO) {
-                chatSessionDao.deleteExpired(now - AI_CHAT_SESSION_RETENTION_MILLIS)
-                chatSessionDao.trimTo(AI_CHAT_SESSION_MAX_COUNT)
-            }
-            val latest = withContext(Dispatchers.IO) { chatSessionDao.getLatest() }
-            if (latest != null) {
-                restoreFrom(latest)
+            val restored = sessionStore.openLatest()
+            if (restored != null) {
+                applyRestoredSession(restored)
             } else {
                 startNewDraft()
             }
@@ -470,49 +424,44 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun restoreFrom(row: AiChatSession) {
+    /**
+     * Publishes an already decoded session. Runs as one Main-thread update: the payload was
+     * decoded off Main by [AiChatSessionStore], so no suspension happens between the state writes.
+     */
+    private fun applyRestoredSession(restored: RestoredChatSession) {
         turnJob?.cancel()
         turnJob = null
         imageJob?.cancel()
         imageJob = null
+        inputResetKey++
         pendingImage = null
         isImageLoading = false
-        val decoded = AiChatSessionCodec.decode(row.payload)
-        val chat = decoded ?: PersistedChat()
-        activeSessionId = row.id
-        sessionTitle = row.title.ifBlank { AI_CHAT_SESSION_DEFAULT_TITLE }
-        sessionCreatedAt = row.createdAt
-        chatSession.restore(chat.turns, chat.actions, chat.usage, chat.requestCount)
+        activeSessionId = restored.id
+        sessionTitle = restored.title
+        sessionCreatedAt = restored.createdAt
+        chatSession.restore(restored.turns, restored.actions, restored.usage, restored.requestCount)
         usage = chatSession.usage
         requestCount = chatSession.requestCount
-        items.clear()
-        val messages = if (chat.messages.isNotEmpty()) {
-            chat.messages
-        } else {
-            chat.turns.flatMap { turn ->
-                listOf(
-                    PersistedChatMessage("user", turn.user),
-                    PersistedChatMessage("assistant", turn.assistant),
-                )
-            }
-        }
-        messages.forEach { message ->
+        val restoredItems = restored.messages.mapNotNull { message ->
             when (message.role) {
-                "user" -> items += AiChatItem.User(nextItemId(), message.text, message.image)
-                "assistant" -> items += AiChatItem.Assistant(nextItemId(), message.text)
+                "user" -> AiChatItem.User(nextItemId(), message.text, message.image)
+                "assistant" -> AiChatItem.Assistant(nextItemId(), message.text)
+                else -> null
             }
         }
-        if (decoded == null && row.payload.isNotBlank()) {
+        items.clear()
+        items.addAll(restoredItems)
+        thumbnails.retainOnly(restoredItems.mapNotNull { (it as? AiChatItem.User)?.image })
+        if (restored.corrupt) {
             addNotice(app.getString(R.string.ai_session_corrupt))
         }
-        if (messages.lastOrNull()?.role == "user") {
+        if (restored.endsWithUserMessage) {
             addNotice(app.getString(R.string.ai_session_interrupted))
         }
         currentTurn.clear()
         currentUserText = ""
         pendingWrite = null
         pendingProposalId = null
-        input = ""
         isBusy = false
         statusText = null
         lastErrorId = null
@@ -536,82 +485,20 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private suspend fun persistSession() {
-        sessionMutex.withLock {
-            val chat = snapshotChat()
-            if (chat.messages.isEmpty() && chat.turns.isEmpty()) return@withLock
-            val now = System.currentTimeMillis()
-            val payload = AiChatSessionCodec.encode(chat)
-            val preview = previewOf(chat)
-            val title = sessionTitle.ifBlank { AI_CHAT_SESSION_DEFAULT_TITLE }
-            val id = activeSessionId
-            if (id == null) {
-                val newId = withContext(Dispatchers.IO) {
-                    chatSessionDao.insert(
-                        AiChatSession(
-                            title = title,
-                            createdAt = sessionCreatedAt,
-                            updatedAt = now,
-                            preview = preview,
-                            payload = payload,
-                        ),
-                    )
-                }
-                activeSessionId = newId
-            } else {
-                val updated = withContext(Dispatchers.IO) {
-                    chatSessionDao.update(
-                        AiChatSession(
-                            id = id,
-                            title = title,
-                            createdAt = sessionCreatedAt,
-                            updatedAt = now,
-                            preview = preview,
-                            payload = payload,
-                        ),
-                    )
-                }
-                if (updated == 0) {
-                    val newId = withContext(Dispatchers.IO) {
-                        chatSessionDao.insert(
-                            AiChatSession(
-                                title = title,
-                                createdAt = sessionCreatedAt,
-                                updatedAt = now,
-                                preview = preview,
-                                payload = payload,
-                            ),
-                        )
-                    }
-                    activeSessionId = newId
-                }
-            }
-            withContext(Dispatchers.IO) {
-                chatSessionDao.deleteExpired(now - AI_CHAT_SESSION_RETENTION_MILLIS)
-                chatSessionDao.trimTo(AI_CHAT_SESSION_MAX_COUNT)
-            }
+        val sessionId = sessionStore.persist {
+            // Snapshot only; conversion, preview and encoding happen inside the store off Main.
+            ChatPersistenceSnapshot(
+                items = items.toList(),
+                turns = chatSession.completedTurns,
+                actions = chatSession.actionLines,
+                usage = chatSession.usage,
+                requestCount = chatSession.requestCount,
+                sessionId = activeSessionId,
+                title = sessionTitle,
+                createdAt = sessionCreatedAt,
+            )
         }
-    }
-
-    private fun snapshotChat(): PersistedChat {
-        val messages = items.mapNotNull { item ->
-            when (item) {
-                is AiChatItem.User -> PersistedChatMessage("user", item.text, item.image)
-                is AiChatItem.Assistant -> PersistedChatMessage("assistant", item.text)
-                else -> null
-            }
-        }.takeLast(AiChatSessionCodec.MAX_UI_MESSAGES)
-        return PersistedChat(
-            messages = messages,
-            turns = chatSession.completedTurns,
-            actions = chatSession.actionLines,
-            usage = chatSession.usage,
-            requestCount = chatSession.requestCount,
-        )
-    }
-
-    private fun previewOf(chat: PersistedChat): String {
-        val text = chat.messages.lastOrNull()?.text.orEmpty()
-        return AiTokenBudget.truncateChars(text.trim(), 120)
+        if (sessionId != null) activeSessionId = sessionId
     }
 
     private fun startTurn(provider: AiProviderConfig) {
@@ -620,7 +507,9 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         statusText = app.getString(R.string.ai_status_thinking)
         turnJob = viewModelScope.launch {
             try {
-                runLoop(provider)
+                // One provider configuration and one decrypted credential per turn; every tool
+                // round below reuses them instead of re-reading the DataStore.
+                runLoop(repository.resolveCredentials(provider))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: AiApiException) {
@@ -640,26 +529,33 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun runLoop(provider: AiProviderConfig) {
+    private suspend fun runLoop(credentials: AiTurnCredentials) {
+        val provider = credentials.provider
         var rounds = 0
         while (rounds < AiTokenBudget.MAX_TOOL_ROUNDS) {
             rounds++
             val tags = tagDao.getAll()
-            val tagMap = tags.associate { it.name to it.id }
-            val dynamic = AiPrompt.buildDynamicContext(
-                now = ZonedDateTime.now(),
-                tags = tags.map { it.name },
-                actions = chatSession.actionLines,
-            )
+            val actionLines = chatSession.actionLines
+            val completedTurns = chatSession.completedTurns
+            val turnMessages = currentTurn.toList()
             val modelContextLength = provider.models
                 .firstOrNull { it.id == provider.modelId }
                 ?.contextLength
-            val built = contextBuilder.build(
-                completedTurns = chatSession.completedTurns,
-                currentTurn = currentTurn,
-                dynamicContext = dynamic,
-                modelContextLength = modelContextLength,
-            )
+            // Prompt assembly, history trimming and token estimation are pure CPU work over
+            // immutable snapshots, so they stay off Main.
+            val built = withContext(Dispatchers.Default) {
+                val dynamic = AiPrompt.buildDynamicContext(
+                    now = ZonedDateTime.now(),
+                    tags = tags.map { it.name },
+                    actions = actionLines,
+                )
+                contextBuilder.build(
+                    completedTurns = completedTurns,
+                    currentTurn = turnMessages,
+                    dynamicContext = dynamic,
+                    modelContextLength = modelContextLength,
+                )
+            }
             if (built.trimmed && !trimNoticeShown) {
                 addNotice(app.getString(R.string.ai_history_trimmed))
                 trimNoticeShown = true
@@ -674,7 +570,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                     .toInt()
             } ?: 4_096
             val completion = repository.complete(
-                provider = provider,
+                credentials = credentials,
                 messages = built.messages,
                 tools = AiTools.definitions,
                 maxTokens = maxOutputTokens,
@@ -707,318 +603,273 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                 it.name !in AiTools.readTools && it.name !in AiTools.writeTools
             }
 
+            // Tool payloads already carried by this turn count against the aggregate budget, so a
+            // later read is trimmed instead of pushing the request over its input budget.
+            var toolResultTokens = contextBuilder.estimateToolResultTokens(currentTurn)
             for (call in readCalls) {
                 statusText = when (call.name) {
                     AiTools.LIST_ALARMS -> app.getString(R.string.ai_status_reading_alarms)
                     AiTools.LIST_EVENTS -> app.getString(R.string.ai_status_reading_events)
                     else -> app.getString(R.string.ai_status_thinking)
                 }
-                val result = executeReadTool(call)
+                val result = executeReadTool(
+                    call = call,
+                    tags = tags,
+                    maxTokens = AiTokenBudget.toolResultAllowance(toolResultTokens),
+                )
+                toolResultTokens += AiTokenBudget.estimateTokens(result.body)
                 currentTurn += ChatMessage(
                     role = ChatRole.TOOL,
                     content = result.body,
                     toolCallId = call.id,
                 )
+                result.summary?.let { summary -> readSummaryThisTurn = summary }
                 result.notice?.let(::addNotice)
             }
-            for (call in unknownCalls) {
+            val unknownResults = withContext(Dispatchers.Default) {
+                unknownCalls.map { call ->
+                    ToolCallResult(
+                        callId = call.id,
+                        content = errorToolResult("unknown_tool", "Unknown tool ${call.name}"),
+                    )
+                }
+            }
+            unknownResults.forEach { result ->
+                toolResultTokens += AiTokenBudget.estimateTokens(result.content)
                 currentTurn += ChatMessage(
                     role = ChatRole.TOOL,
-                    content = errorToolResult("unknown_tool", "Unknown tool ${call.name}"),
-                    toolCallId = call.id,
+                    content = result.content,
+                    toolCallId = result.callId,
                 )
             }
 
             if (writeCalls.isNotEmpty()) {
                 statusText = app.getString(R.string.ai_status_correcting)
-                val alarmsById = alarmDao.getAll().associateBy { it.id }
-                val eventsById = eventDao.getAll().associateBy { it.id }
-                val tagsById = tags.associateBy { it.id }
-                val alarmTagsById = tagDao.getAlarmTagRefs()
-                    .groupBy { it.alarmId }
-                    .mapValues { (_, refs) ->
-                        refs.mapNotNull { tagsById[it.tagId] }
-                            .map { TagRef(id = it.id, name = it.name) }
-                    }
-                val eventTagsById = tagDao.getEventTagRefs()
-                    .groupBy { it.eventId }
-                    .mapValues { (_, refs) ->
-                        refs.mapNotNull { tagsById[it.tagId] }
-                            .map { TagRef(id = it.id, name = it.name) }
-                    }
-                val parser = AiToolParser(
-                    now = LocalDateTime.now(),
-                    availableTags = tagMap,
-                    alarmsById = alarmsById,
-                    eventsById = eventsById,
-                    alarmTagsById = alarmTagsById,
-                    eventTagsById = eventTagsById,
-                )
-                val alarms = mutableListOf<AlarmDraft>()
-                val alarmStacks = mutableListOf<AlarmStackDraft>()
-                val events = mutableListOf<EventDraft>()
-                val alarmUpdates = mutableListOf<AlarmUpdateDraft>()
-                val alarmDeletes = mutableListOf<AlarmDeleteDraft>()
-                val eventUpdates = mutableListOf<EventUpdateDraft>()
-                val eventDeletes = mutableListOf<EventDeleteDraft>()
-                var parseFailed = false
-                val parseErrors = mutableMapOf<String, AiToolParseException>()
-
-                for (call in writeCalls) {
-                    try {
-                        when (call.name) {
-                            AiTools.CREATE_ALARMS -> alarms += parser.parseAlarms(call.arguments)
-                            AiTools.CREATE_ALARM_STACKS ->
-                                alarmStacks += parser.parseAlarmStacks(call.arguments)
-
-                            AiTools.CREATE_EVENTS -> events += parser.parseEvents(call.arguments)
-                            AiTools.UPDATE_ALARMS ->
-                                alarmUpdates += parser.parseAlarmUpdates(call.arguments)
-
-                            AiTools.DELETE_ALARMS ->
-                                alarmDeletes += parser.parseAlarmDeletes(call.arguments)
-
-                            AiTools.UPDATE_EVENTS ->
-                                eventUpdates += parser.parseEventUpdates(call.arguments)
-
-                            AiTools.DELETE_EVENTS ->
-                                eventDeletes += parser.parseEventDeletes(call.arguments)
+                // Row loading, argument parsing, validation and rejection payloads are CPU and
+                // JSON work; only the resulting state changes below touch Main.
+                val outcome = withContext(Dispatchers.Default) {
+                    prepareWriteCalls(writeCalls, tags)
+                }
+                when (outcome) {
+                    is WriteOutcome.Rejected -> {
+                        outcome.results.forEach { result ->
+                            currentTurn += ChatMessage(
+                                role = ChatRole.TOOL,
+                                content = result.content,
+                                toolCallId = result.callId,
+                            )
                         }
-                    } catch (e: AiToolParseException) {
-                        parseFailed = true
-                        parseErrors[call.id] = e
+                        addNotice(app.getString(R.string.ai_correcting_notice))
+                        statusText = null
+                        continue
                     }
-                }
 
-                if (parseFailed) {
-                    for (call in writeCalls) {
-                        val message = parseErrors[call.id]?.let { "${it.code}: ${it.message}" }
-                            ?: "batch_rejected: another item in this batch was invalid"
-                        val code = parseErrors[call.id]?.code ?: "batch_rejected"
-                        currentTurn += ChatMessage(
-                            role = ChatRole.TOOL,
-                            content = errorToolResult(code, message),
-                            toolCallId = call.id,
+                    is WriteOutcome.Ready -> {
+                        val drafts = outcome.drafts
+                        val proposal = AiChatItem.Proposal(
+                            id = nextItemId(),
+                            alarms = drafts.alarms,
+                            alarmStacks = drafts.alarmStacks,
+                            events = drafts.events,
+                            alarmUpdates = drafts.alarmUpdates,
+                            alarmDeletes = drafts.alarmDeletes,
+                            eventUpdates = drafts.eventUpdates,
+                            eventDeletes = drafts.eventDeletes,
+                            state = ProposalState.PENDING,
                         )
+                        items += proposal
+                        pendingWrite = PendingWrite(
+                            proposalId = proposal.id,
+                            userText = currentUserText,
+                            alarms = drafts.alarms,
+                            alarmStacks = drafts.alarmStacks,
+                            events = drafts.events,
+                            alarmUpdates = drafts.alarmUpdates,
+                            alarmDeletes = drafts.alarmDeletes,
+                            eventUpdates = drafts.eventUpdates,
+                            eventDeletes = drafts.eventDeletes,
+                            reasoningContent = completion.reasoningContent?.let {
+                                AiTokenBudget.truncateChars(it, AiTokenBudget.COMPLETED_REASONING_CHARS)
+                            },
+                        )
+                        pendingProposalId = proposal.id
+                        statusText = null
+                        return
                     }
-                    addNotice(app.getString(R.string.ai_correcting_notice))
-                    statusText = null
-                    continue
                 }
-
-                val totalActions = alarms.size + events.size +
-                    alarmStacks.sumOf { it.times.size } +
-                    alarmUpdates.size + alarmDeletes.size +
-                    eventUpdates.size + eventDeletes.size
-                if (totalActions == 0) {
-                    rejectWriteCalls(writeCalls, "empty", "there are no changes to apply")
-                    statusText = null
-                    continue
-                }
-                if (totalActions > AiTokenBudget.MAX_BATCH_ITEMS) {
-                    rejectWriteCalls(
-                        writeCalls,
-                        "too_many_items",
-                        "at most ${AiTokenBudget.MAX_BATCH_ITEMS} actions are allowed per proposal",
-                    )
-                    statusText = null
-                    continue
-                }
-
-                val affectedOccurrences = events.sumOf { it.occurrenceCount } +
-                    eventUpdates.sumOf { it.affectedCount } +
-                    eventDeletes.sumOf { it.affectedCount }
-                if (affectedOccurrences > AiTokenBudget.MAX_TOTAL_AFFECTED) {
-                    rejectWriteCalls(
-                        writeCalls,
-                        "too_many_occurrences",
-                        "this proposal would affect $affectedOccurrences event occurrences; " +
-                            "keep the total under ${AiTokenBudget.MAX_TOTAL_AFFECTED}",
-                    )
-                    statusText = null
-                    continue
-                }
-
-                val updateAlarmIds = alarmUpdates.map { it.alarmId }
-                val deleteAlarmIds = alarmDeletes.map { it.alarmId }
-                val updateEventIds = eventUpdates.map { it.eventId }
-                val deleteEventIds = eventDeletes.map { it.eventId }
-                val conflict = updateAlarmIds.any { it in deleteAlarmIds } ||
-                    updateEventIds.any { it in deleteEventIds } ||
-                    updateAlarmIds.size != updateAlarmIds.distinct().size ||
-                    deleteAlarmIds.size != deleteAlarmIds.distinct().size ||
-                    updateEventIds.size != updateEventIds.distinct().size ||
-                    deleteEventIds.size != deleteEventIds.distinct().size
-                if (conflict) {
-                    rejectWriteCalls(
-                        writeCalls,
-                        "conflicting_actions",
-                        "the same alarm or event cannot be changed and deleted, or changed twice, " +
-                            "in one proposal",
-                    )
-                    statusText = null
-                    continue
-                }
-
-                val proposal = AiChatItem.Proposal(
-                    id = nextItemId(),
-                    alarms = alarms,
-                    alarmStacks = alarmStacks,
-                    events = events,
-                    alarmUpdates = alarmUpdates,
-                    alarmDeletes = alarmDeletes,
-                    eventUpdates = eventUpdates,
-                    eventDeletes = eventDeletes,
-                    state = ProposalState.PENDING,
-                )
-                items += proposal
-                pendingWrite = PendingWrite(
-                    proposalId = proposal.id,
-                    userText = currentUserText,
-                    alarms = alarms,
-                    alarmStacks = alarmStacks,
-                    events = events,
-                    alarmUpdates = alarmUpdates,
-                    alarmDeletes = alarmDeletes,
-                    eventUpdates = eventUpdates,
-                    eventDeletes = eventDeletes,
-                    reasoningContent = completion.reasoningContent?.let {
-                        AiTokenBudget.truncateChars(it, AiTokenBudget.COMPLETED_REASONING_CHARS)
-                    },
-                )
-                pendingProposalId = proposal.id
-                statusText = null
-                return
             }
         }
         addError(app.getString(R.string.ai_error_tool_rounds), retryable = true)
     }
 
-    private suspend fun executeReadTool(call: ChatToolCall): ReadToolResult =
-        when (call.name) {
-            AiTools.LIST_ALARMS -> readAlarms()
-            AiTools.LIST_EVENTS -> readEvents(call.arguments)
-            else -> ReadToolResult(
-                body = errorToolResult("unknown_tool", "Unknown tool ${call.name}"),
-                notice = null,
-            )
+    /**
+     * Loads one page of the requested rows and builds the tool payload off Main. Ordering, range
+     * filtering and the row cap happen in SQL, tag references are fetched only for the returned
+     * ids, and the payload is trimmed to the remaining token budget before the caller appends it.
+     */
+    private suspend fun executeReadTool(
+        call: ChatToolCall,
+        tags: List<Tag>,
+        maxTokens: Int,
+    ): ReadToolResult =
+        withContext(Dispatchers.Default) {
+            when (call.name) {
+                AiTools.LIST_ALARMS -> readAlarms(tags, maxTokens)
+                AiTools.LIST_EVENTS -> readEvents(call.arguments, tags, maxTokens)
+                else -> ReadToolResult(
+                    body = errorToolResult("unknown_tool", "Unknown tool ${call.name}"),
+                    notice = null,
+                    summary = null,
+                )
+            }
         }
 
-    private suspend fun readAlarms(): ReadToolResult {
-        val all = alarmDao.getAll().sortedWith(
-            compareBy({ it.time }, { it.fireDate ?: Long.MAX_VALUE }),
-        )
-        val tagsById = tagDao.getAll().associateBy { it.id }
-        val alarmTagsById = tagDao.getAlarmTagRefs().groupBy { it.alarmId }
-        val shown = all.take(READ_RESULT_LIMIT)
-        val body = buildJsonObject {
-            put("total", all.size)
-            put("truncated", all.size > shown.size)
-            putJsonArray("alarms") {
-                shown.forEach { alarm ->
-                    add(
-                        buildJsonObject {
-                            put("id", alarm.id)
-                            put("time", formatSeconds(alarm.time))
-                            alarm.fireDate?.let { fireDate ->
-                                put("date", LocalDate.ofEpochDay(fireDate).toString())
-                            }
-                            put("enabled", alarm.enabled)
-                            put("oneTime", alarm.oneTime)
-                            put("name", AiTokenBudget.truncateChars(alarm.name, 80))
-                            if (alarm.note.isNotBlank()) {
-                                put("note", AiTokenBudget.truncateChars(alarm.note, 120))
-                            }
-                            put("fromEvent", alarm.eventId != null)
-                            alarm.eventId?.let { put("eventId", it) }
-                            putJsonArray("tags") {
-                                alarmTagsById[alarm.id].orEmpty()
-                                    .mapNotNull { tagsById[it.tagId] }
-                                    .forEach { add(it.name) }
-                            }
-                        },
-                    )
-                }
-            }
-        }.toString()
-        readSummaryThisTurn = "alarms (${all.size})"
-        val notice = if (all.size > shown.size) {
-            app.getString(R.string.ai_read_alarms_truncated, shown.size, all.size)
+    private suspend fun readAlarms(tags: List<Tag>, maxTokens: Int): ReadToolResult {
+        val total = alarmDao.count()
+        val page = alarmDao.getOrderedPage(READ_RESULT_LIMIT)
+        val tagsById = tags.associateBy { it.id }
+        val tagNames = alarmTagRefsById(page.map { it.id }, tagsById)
+            .mapValues { (_, refs) -> refs.map { ref -> ref.name } }
+        val shown = AiToolPayload.fittingPrefix(page, maxTokens) { candidate ->
+            AiTokenBudget.estimateTokens(alarmsPayload(total, candidate, tagNames))
+        }
+        val notice = if (total > shown.size) {
+            app.getString(R.string.ai_read_alarms_truncated, shown.size, total)
         } else {
             app.getString(R.string.ai_read_alarms, shown.size)
         }
-        return ReadToolResult(body = body, notice = notice)
+        return ReadToolResult(
+            body = alarmsPayload(total, shown, tagNames),
+            notice = notice,
+            summary = "alarms ($total)",
+        )
     }
 
-    private suspend fun readEvents(arguments: String): ReadToolResult {
+    private fun alarmsPayload(
+        total: Int,
+        shown: List<Alarm>,
+        tagNames: Map<Long, List<String>>,
+    ): String = buildJsonObject {
+        put("total", total)
+        put("truncated", total > shown.size)
+        putJsonArray("alarms") {
+            shown.forEach { alarm ->
+                add(
+                    buildJsonObject {
+                        put("id", alarm.id)
+                        put("time", formatSeconds(alarm.time))
+                        alarm.fireDate?.let { fireDate ->
+                            put("date", LocalDate.ofEpochDay(fireDate).toString())
+                        }
+                        put("enabled", alarm.enabled)
+                        put("oneTime", alarm.oneTime)
+                        put("name", AiTokenBudget.truncateChars(alarm.name, 80))
+                        if (alarm.note.isNotBlank()) {
+                            put("note", AiTokenBudget.truncateChars(alarm.note, 120))
+                        }
+                        put("fromEvent", alarm.eventId != null)
+                        alarm.eventId?.let { put("eventId", it) }
+                        putJsonArray("tags") {
+                            tagNames[alarm.id].orEmpty().forEach { add(it) }
+                        }
+                    },
+                )
+            }
+        }
+    }.toString()
+
+    private suspend fun readEvents(
+        arguments: String,
+        tags: List<Tag>,
+        maxTokens: Int,
+    ): ReadToolResult {
         val range = try {
             parseEventRange(arguments)
         } catch (e: Exception) {
             return ReadToolResult(
                 body = errorToolResult("invalid_range", e.message ?: "invalid date range"),
                 notice = null,
+                summary = null,
             )
         }
-        val all = eventDao.getBetween(range.first.toEpochDay(), range.second.toEpochDay())
-        val alarmEventIds = alarmDao.getLinkedEventIds().toSet()
-        val tagsById = tagDao.getAll().associateBy { it.id }
-        val eventTagsById = tagDao.getEventTagRefs().groupBy { it.eventId }
-        val shown = all.take(READ_RESULT_LIMIT)
-        val body = buildJsonObject {
-            put("total", all.size)
-            put("truncated", all.size > shown.size)
-            putJsonArray("events") {
-                shown.forEach { event ->
-                    add(
-                        buildJsonObject {
-                            put("id", event.id)
-                            put("date", LocalDate.ofEpochDay(event.date).toString())
-                            if (event.allDay) {
-                                put("allDay", true)
-                            } else {
-                                put("start", formatSeconds(event.start))
-                                if (event.hasEndTime) {
-                                    put("end", formatSeconds(event.endTimeOfDay))
-                                    if (event.endDayOffset > 0) {
-                                        put(
-                                            "endDate",
-                                            LocalDate.ofEpochDay(event.endDateEpochDay).toString(),
-                                        )
-                                    }
-                                }
-                            }
-                            put("title", AiTokenBudget.truncateChars(event.title, 80))
-                            if (event.note.isNotBlank()) {
-                                put("note", AiTokenBudget.truncateChars(event.note, 120))
-                            }
-                            put("repeat", repeatLabel(event.repeatType))
-                            if (event.repeatType == Event.REPEAT_WEEKLY) {
-                                putJsonArray("repeatDays") {
-                                    event.repeatDays.split(',')
-                                        .mapNotNull { it.trim().toIntOrNull() }
-                                        .forEach { add(it) }
-                                }
-                            }
-                            put("hasAlarm", event.id in alarmEventIds)
-                            put("reminderMinutes", event.reminderMinutes)
-                            putJsonArray("tags") {
-                                eventTagsById[event.id].orEmpty()
-                                    .mapNotNull { tagsById[it.tagId] }
-                                    .forEach { add(it.name) }
-                            }
-                        },
-                    )
-                }
-            }
-        }.toString()
-        readSummaryThisTurn = "events ${range.first}..${range.second} (${all.size})"
-        val notice = if (all.size > shown.size) {
-            app.getString(R.string.ai_read_events_truncated, shown.size, all.size)
+        val from = range.first.toEpochDay()
+        val to = range.second.toEpochDay()
+        val total = eventDao.countBetween(from, to)
+        val page = eventDao.getBetweenPage(from, to, READ_RESULT_LIMIT)
+        val tagsById = tags.associateBy { it.id }
+        val pageIds = page.map { it.id }
+        val alarmEventIds = AiIdChunks.of(pageIds)
+            .flatMap { alarmDao.getLinkedEventIdsFor(it) }
+            .toSet()
+        val tagNames = eventTagRefsById(pageIds, tagsById)
+            .mapValues { (_, refs) -> refs.map { ref -> ref.name } }
+        val shown = AiToolPayload.fittingPrefix(page, maxTokens) { candidate ->
+            AiTokenBudget.estimateTokens(
+                eventsPayload(total, candidate, alarmEventIds, tagNames),
+            )
+        }
+        val notice = if (total > shown.size) {
+            app.getString(R.string.ai_read_events_truncated, shown.size, total)
         } else {
             app.getString(R.string.ai_read_events, shown.size)
         }
-        return ReadToolResult(body = body, notice = notice)
+        return ReadToolResult(
+            body = eventsPayload(total, shown, alarmEventIds, tagNames),
+            notice = notice,
+            summary = "events ${range.first}..${range.second} ($total)",
+        )
     }
+
+    private fun eventsPayload(
+        total: Int,
+        shown: List<Event>,
+        alarmEventIds: Set<Long>,
+        tagNames: Map<Long, List<String>>,
+    ): String = buildJsonObject {
+        put("total", total)
+        put("truncated", total > shown.size)
+        putJsonArray("events") {
+            shown.forEach { event ->
+                add(
+                    buildJsonObject {
+                        put("id", event.id)
+                        put("date", LocalDate.ofEpochDay(event.date).toString())
+                        if (event.allDay) {
+                            put("allDay", true)
+                        } else {
+                            put("start", formatSeconds(event.start))
+                            if (event.hasEndTime) {
+                                put("end", formatSeconds(event.endTimeOfDay))
+                                if (event.endDayOffset > 0) {
+                                    put(
+                                        "endDate",
+                                        LocalDate.ofEpochDay(event.endDateEpochDay).toString(),
+                                    )
+                                }
+                            }
+                        }
+                        put("title", AiTokenBudget.truncateChars(event.title, 80))
+                        if (event.note.isNotBlank()) {
+                            put("note", AiTokenBudget.truncateChars(event.note, 120))
+                        }
+                        put("repeat", repeatLabel(event.repeatType))
+                        if (event.repeatType == Event.REPEAT_WEEKLY) {
+                            putJsonArray("repeatDays") {
+                                event.repeatDays.split(',')
+                                    .mapNotNull { it.trim().toIntOrNull() }
+                                    .forEach { add(it) }
+                            }
+                        }
+                        put("hasAlarm", event.id in alarmEventIds)
+                        put("reminderMinutes", event.reminderMinutes)
+                        putJsonArray("tags") {
+                            tagNames[event.id].orEmpty().forEach { add(it) }
+                        }
+                    },
+                )
+            }
+        }
+    }.toString()
 
     private fun parseEventRange(arguments: String): Pair<LocalDate, LocalDate> {
         val root = runCatching {
@@ -1349,20 +1200,196 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
         items[index] = transform(items[index] as AiChatItem.Proposal)
     }
 
+    /**
+     * Parses the write tool calls and validates the whole batch. Runs on [Dispatchers.Default],
+     * so it only reads database rows and returns immutable drafts; the caller creates the
+     * proposal item and its Compose state on Main.
+     */
+    private suspend fun prepareWriteCalls(
+        calls: List<ChatToolCall>,
+        tags: List<Tag>,
+    ): WriteOutcome {
+        val tagsById = tags.associateBy { it.id }
+        val rows = loadWriteRows(AiToolReferences.collect(calls), tagsById)
+        val parser = AiToolParser(
+            now = LocalDateTime.now(),
+            availableTags = tags.associate { it.name to it.id },
+            alarmsById = rows.alarmsById,
+            eventsById = rows.eventsById,
+            alarmTagsById = rows.alarmTagsById,
+            eventTagsById = rows.eventTagsById,
+        )
+        val alarms = mutableListOf<AlarmDraft>()
+        val alarmStacks = mutableListOf<AlarmStackDraft>()
+        val events = mutableListOf<EventDraft>()
+        val alarmUpdates = mutableListOf<AlarmUpdateDraft>()
+        val alarmDeletes = mutableListOf<AlarmDeleteDraft>()
+        val eventUpdates = mutableListOf<EventUpdateDraft>()
+        val eventDeletes = mutableListOf<EventDeleteDraft>()
+        val parseErrors = mutableMapOf<String, AiToolParseException>()
+
+        for (call in calls) {
+            try {
+                when (call.name) {
+                    AiTools.CREATE_ALARMS -> alarms += parser.parseAlarms(call.arguments)
+                    AiTools.CREATE_ALARM_STACKS ->
+                        alarmStacks += parser.parseAlarmStacks(call.arguments)
+
+                    AiTools.CREATE_EVENTS -> events += parser.parseEvents(call.arguments)
+                    AiTools.UPDATE_ALARMS ->
+                        alarmUpdates += parser.parseAlarmUpdates(call.arguments)
+
+                    AiTools.DELETE_ALARMS ->
+                        alarmDeletes += parser.parseAlarmDeletes(call.arguments)
+
+                    AiTools.UPDATE_EVENTS ->
+                        eventUpdates += parser.parseEventUpdates(call.arguments)
+
+                    AiTools.DELETE_EVENTS ->
+                        eventDeletes += parser.parseEventDeletes(call.arguments)
+                }
+            } catch (e: AiToolParseException) {
+                parseErrors[call.id] = e
+            }
+        }
+
+        if (parseErrors.isNotEmpty()) {
+            return WriteOutcome.Rejected(
+                calls.map { call ->
+                    val error = parseErrors[call.id]
+                    ToolCallResult(
+                        callId = call.id,
+                        content = errorToolResult(
+                            code = error?.code ?: "batch_rejected",
+                            message = error?.let { "${it.code}: ${it.message}" }
+                                ?: "batch_rejected: another item in this batch was invalid",
+                        ),
+                    )
+                },
+            )
+        }
+
+        val totalActions = alarms.size + events.size +
+            alarmStacks.sumOf { it.times.size } +
+            alarmUpdates.size + alarmDeletes.size +
+            eventUpdates.size + eventDeletes.size
+        if (totalActions == 0) {
+            return rejectWriteCalls(calls, "empty", "there are no changes to apply")
+        }
+        if (totalActions > AiTokenBudget.MAX_BATCH_ITEMS) {
+            return rejectWriteCalls(
+                calls,
+                "too_many_items",
+                "at most ${AiTokenBudget.MAX_BATCH_ITEMS} actions are allowed per proposal",
+            )
+        }
+
+        val affectedOccurrences = events.sumOf { it.occurrenceCount } +
+            eventUpdates.sumOf { it.affectedCount } +
+            eventDeletes.sumOf { it.affectedCount }
+        if (affectedOccurrences > AiTokenBudget.MAX_TOTAL_AFFECTED) {
+            return rejectWriteCalls(
+                calls,
+                "too_many_occurrences",
+                "this proposal would affect $affectedOccurrences event occurrences; " +
+                    "keep the total under ${AiTokenBudget.MAX_TOTAL_AFFECTED}",
+            )
+        }
+
+        val updateAlarmIds = alarmUpdates.map { it.alarmId }
+        val deleteAlarmIds = alarmDeletes.map { it.alarmId }
+        val updateEventIds = eventUpdates.map { it.eventId }
+        val deleteEventIds = eventDeletes.map { it.eventId }
+        val conflict = updateAlarmIds.any { it in deleteAlarmIds } ||
+            updateEventIds.any { it in deleteEventIds } ||
+            updateAlarmIds.size != updateAlarmIds.distinct().size ||
+            deleteAlarmIds.size != deleteAlarmIds.distinct().size ||
+            updateEventIds.size != updateEventIds.distinct().size ||
+            deleteEventIds.size != deleteEventIds.distinct().size
+        if (conflict) {
+            return rejectWriteCalls(
+                calls,
+                "conflicting_actions",
+                "the same alarm or event cannot be changed and deleted, or changed twice, " +
+                    "in one proposal",
+            )
+        }
+
+        return WriteOutcome.Ready(
+            PreparedDrafts(
+                alarms = alarms,
+                alarmStacks = alarmStacks,
+                events = events,
+                alarmUpdates = alarmUpdates,
+                alarmDeletes = alarmDeletes,
+                eventUpdates = eventUpdates,
+                eventDeletes = eventDeletes,
+            ),
+        )
+    }
+
     private fun rejectWriteCalls(
         calls: List<ChatToolCall>,
         code: String,
         message: String,
-    ) {
-        calls.forEach { call ->
-            currentTurn += ChatMessage(
-                role = ChatRole.TOOL,
-                content = errorToolResult(code, message),
-                toolCallId = call.id,
-            )
-        }
-        addNotice(app.getString(R.string.ai_correcting_notice))
+    ): WriteOutcome.Rejected = WriteOutcome.Rejected(
+        calls.map { call ->
+            ToolCallResult(callId = call.id, content = errorToolResult(code, message))
+        },
+    )
+
+    /**
+     * Loads only the rows a write batch can reference: the ids parsed out of the calls, the whole
+     * series of each referenced event (scope expansion needs the siblings) and the alarms linked
+     * to those events. Every `IN (...)` lookup is chunked because SQLite bounds statement
+     * parameters.
+     */
+    private suspend fun loadWriteRows(
+        references: ReferencedIds,
+        tagsById: Map<Long, Tag>,
+    ): WriteRows {
+        val referencedEvents = AiIdChunks.of(references.eventIds)
+            .flatMap { eventDao.getByIds(it) }
+        val seriesIds = referencedEvents.map { it.seriesId }.filter { it != 0L }
+        val seriesEvents = AiIdChunks.of(seriesIds)
+            .flatMap { eventDao.getBySeriesIds(it) }
+        val eventsById = (seriesEvents + referencedEvents).associateBy { it.id }
+        val eventIds = eventsById.keys.toList()
+        val alarmsById = (
+            AiIdChunks.of(references.alarmIds).flatMap { alarmDao.getByIds(it) } +
+                AiIdChunks.of(eventIds).flatMap { alarmDao.getByEventIds(it) }
+            ).associateBy { it.id }
+        return WriteRows(
+            alarmsById = alarmsById,
+            eventsById = eventsById,
+            alarmTagsById = alarmTagRefsById(alarmsById.keys.toList(), tagsById),
+            eventTagsById = eventTagRefsById(eventIds, tagsById),
+        )
     }
+
+    private suspend fun alarmTagRefsById(
+        ids: List<Long>,
+        tagsById: Map<Long, Tag>,
+    ): Map<Long, List<TagRef>> = AiIdChunks.of(ids)
+        .flatMap { tagDao.getAlarmTagRefsFor(it) }
+        .groupBy { it.alarmId }
+        .mapValues { (_, refs) -> refs.toAlarmTagRefs(tagsById) }
+
+    private suspend fun eventTagRefsById(
+        ids: List<Long>,
+        tagsById: Map<Long, Tag>,
+    ): Map<Long, List<TagRef>> = AiIdChunks.of(ids)
+        .flatMap { tagDao.getEventTagRefsFor(it) }
+        .groupBy { it.eventId }
+        .mapValues { (_, refs) -> refs.toEventTagRefs(tagsById) }
+
+    private fun List<AlarmTagCrossRef>.toAlarmTagRefs(
+        tagsById: Map<Long, Tag>,
+    ): List<TagRef> = mapNotNull { tagsById[it.tagId] }.map { TagRef(id = it.id, name = it.name) }
+
+    private fun List<EventTagCrossRef>.toEventTagRefs(
+        tagsById: Map<Long, Tag>,
+    ): List<TagRef> = mapNotNull { tagsById[it.tagId] }.map { TagRef(id = it.id, name = it.name) }
 
     private fun addNotice(text: String) {
         items += AiChatItem.Notice(nextItemId(), text)
@@ -1397,6 +1424,10 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun nextItemId(): Long = nextItemId++
 
+    override fun onCleared() {
+        thumbnails.clear()
+    }
+
     private data class PendingWrite(
         val proposalId: Long,
         val userText: String,
@@ -1413,6 +1444,37 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
     private data class ReadToolResult(
         val body: String,
         val notice: String?,
+        val summary: String?,
+    )
+
+    /** One tool result payload, built off Main and appended to the turn on Main. */
+    private data class ToolCallResult(
+        val callId: String,
+        val content: String,
+    )
+
+    private sealed interface WriteOutcome {
+        data class Rejected(val results: List<ToolCallResult>) : WriteOutcome
+
+        data class Ready(val drafts: PreparedDrafts) : WriteOutcome
+    }
+
+    private data class PreparedDrafts(
+        val alarms: List<AlarmDraft>,
+        val alarmStacks: List<AlarmStackDraft>,
+        val events: List<EventDraft>,
+        val alarmUpdates: List<AlarmUpdateDraft>,
+        val alarmDeletes: List<AlarmDeleteDraft>,
+        val eventUpdates: List<EventUpdateDraft>,
+        val eventDeletes: List<EventDeleteDraft>,
+    )
+
+    /** The subset of rows a write batch can reference, loaded before parsing. */
+    private data class WriteRows(
+        val alarmsById: Map<Long, Alarm>,
+        val eventsById: Map<Long, Event>,
+        val alarmTagsById: Map<Long, List<TagRef>>,
+        val eventTagsById: Map<Long, List<TagRef>>,
     )
 
     private data class ExecutionResult(
