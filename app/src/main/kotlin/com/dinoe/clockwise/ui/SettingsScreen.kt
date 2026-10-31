@@ -98,6 +98,7 @@ fun SettingsScreen(
     val snapInterval by viewModel.snapInterval.collectAsStateWithLifecycle()
     val alarmExpandStyle by viewModel.alarmExpandStyle.collectAsStateWithLifecycle()
     val timePickerStyle by viewModel.timePickerStyle.collectAsStateWithLifecycle()
+    val defaultRingtone by viewModel.defaultRingtone.collectAsStateWithLifecycle()
     val aiConfig by viewModel.aiConfig.collectAsStateWithLifecycle()
     val activeAi = aiConfig?.active()
     val aiSummary = if (activeAi?.hasKey == true) {
@@ -277,6 +278,14 @@ fun SettingsScreen(
                             R.string.alarm_expand_style_fade_hint
                         },
                     ),
+                )
+                SettingsDivider()
+                RingtoneSettingRow(
+                    title = stringResource(R.string.settings_default_ringtone_label),
+                    value = defaultRingtone,
+                    supportingText = stringResource(R.string.settings_default_ringtone_helper),
+                    useSystemDefaultLabel = true,
+                    onValueChange = viewModel::setDefaultRingtone,
                 )
             }
 

@@ -33,6 +33,7 @@ data class AlarmDraft(
     val enabled: Boolean,
     val oneTime: Boolean,
     val tags: List<TagRef>,
+    val ringtone: String = Alarm.DEFAULT_RINGTONE,
 )
 
 data class AlarmStackDraft(
@@ -42,6 +43,7 @@ data class AlarmStackDraft(
     val enabled: Boolean,
     val oneTime: Boolean,
     val tags: List<TagRef>,
+    val ringtone: String = Alarm.DEFAULT_RINGTONE,
 )
 
 data class EventDraft(
@@ -81,6 +83,8 @@ data class AlarmUpdateDraft(
     val previousName: String,
     val previousEnabled: Boolean,
     val previousOneTime: Boolean,
+    val ringtone: String = Alarm.DEFAULT_RINGTONE,
+    val previousRingtone: String = Alarm.DEFAULT_RINGTONE,
 )
 
 data class AlarmDeleteDraft(
@@ -143,6 +147,8 @@ class AiToolParser(
     private val eventsById: Map<Long, Event> = emptyMap(),
     private val alarmTagsById: Map<Long, List<TagRef>> = emptyMap(),
     private val eventTagsById: Map<Long, List<TagRef>> = emptyMap(),
+    // Uri strings returned by list_ringtones; a write may only reference one of these.
+    private val availableRingtones: Set<String> = emptySet(),
 ) {
     // Indexes over the injected subset only, so scope expansion and "has an alarm" checks do not
     // rescan every loaded row per parsed item.
@@ -325,6 +331,7 @@ class AiToolParser(
         } else {
             alarmTagsById[id].orEmpty()
         }
+        val ringtone = parseRingtone(item, "alarms[$index].ringtone", alarm.ringtone)
         return AlarmUpdateDraft(
             alarmId = id,
             time = time,
@@ -339,6 +346,8 @@ class AiToolParser(
             previousName = alarm.name,
             previousEnabled = alarm.enabled,
             previousOneTime = alarm.oneTime,
+            ringtone = ringtone,
+            previousRingtone = alarm.ringtone,
         )
     }
 
@@ -549,6 +558,7 @@ class AiToolParser(
             enabled = enabled,
             oneTime = oneTime,
             tags = tags,
+            ringtone = parseRingtone(item, "alarms[$index].ringtone"),
         )
     }
 
@@ -597,6 +607,7 @@ class AiToolParser(
             enabled = enabled,
             oneTime = oneTime,
             tags = tags,
+            ringtone = parseRingtone(item, "stacks[$index].ringtone"),
         )
     }
 
@@ -781,6 +792,25 @@ class AiToolParser(
             tags = tags,
             endDayOffset = endDayOffset,
             allDay = allDay,
+        )
+    }
+
+    /**
+     * Accepts the two symbolic values or a Uri offered by list_ringtones. Unknown values are
+     * rejected instead of being written, so a hallucinated sound cannot silence an alarm.
+     */
+    private fun parseRingtone(
+        item: JsonObject,
+        label: String,
+        current: String = Alarm.DEFAULT_RINGTONE,
+    ): String {
+        if (!item.containsKey("ringtone")) return current
+        val raw = item.stringOrNull("ringtone")?.trim()
+        if (raw == Alarm.DEFAULT_RINGTONE || raw == Alarm.SILENT_RINGTONE) return raw
+        if (!raw.isNullOrEmpty() && raw in availableRingtones) return raw
+        throw error(
+            "unknown_ringtone",
+            "$label must be \"default\", \"silent\", or a uri returned by list_ringtones",
         )
     }
 

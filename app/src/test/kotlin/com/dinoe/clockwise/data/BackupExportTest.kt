@@ -76,6 +76,7 @@ class BackupExportTest {
                         put("oneTime", alarm.oneTime)
                         alarm.snoozedUntil?.let { put("snoozedUntil", it) }
                         alarm.stackId?.let { put("stackId", it) }
+                        put("ringtone", alarm.ringtone)
                     },
                 )
             }

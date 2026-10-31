@@ -111,6 +111,7 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
         name: String,
         note: String,
         oneTime: Boolean,
+        ringtone: String,
         tags: List<Tag>,
     ) {
         launchWrite {
@@ -120,6 +121,7 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
                 note = note,
                 oneTime = oneTime,
                 tags = tags,
+                ringtone = ringtone,
             )
         }
     }
@@ -129,6 +131,7 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
         name: String,
         note: String,
         oneTime: Boolean,
+        ringtone: String,
         tags: List<Tag>,
     ) {
         launchWrite {
@@ -138,6 +141,7 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
                 note = note,
                 oneTime = oneTime,
                 tags = tags,
+                ringtone = ringtone,
             )
         }
     }
@@ -148,6 +152,7 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
         name: String,
         note: String,
         oneTime: Boolean,
+        ringtone: String,
         tags: List<Tag>,
     ) {
         launchWrite {
@@ -160,7 +165,14 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
                 enabled = alarm.enabled,
                 oneTime = oneTime,
                 tags = tags,
+                ringtone = ringtone,
             )
+        }
+    }
+
+    fun setRingtone(alarm: Alarm, ringtone: String) {
+        launchWrite {
+            writer.updateAlarmRingtone(alarm, ringtone)
         }
     }
 

@@ -73,9 +73,12 @@ object AiPrompt {
           time.
         - After firing, a normal alarm switches itself off but stays in the list; oneTime=true deletes
           it. An alarm never repeats on its own.
-        - A stack is two or more plain alarms that share one name, note, tags and oneTime setting but
-          ring at different times; the list shows them as one expandable card. A stack cannot have a
-          date. Use create_alarm_stacks for related times and create_alarms for independent alarms.
+        - A stack is two or more plain alarms that share one name, note, tags, oneTime setting and
+          ringtone but ring at different times; the list shows them as one expandable card. A stack
+          cannot have a date. Use create_alarm_stacks for related times and create_alarms for
+          independent alarms.
+        - Alarm ringtone: "default" (Settings default), "silent", or a uri from list_ringtones.
+          Omit it to keep the current sound; never invent a uri.
         - For a repeating reminder (daily or specific weekdays), propose a recurring event with
           withAlarm=true instead; the event creates one alarm per occurrence and requires an until
           date. Explain this briefly.

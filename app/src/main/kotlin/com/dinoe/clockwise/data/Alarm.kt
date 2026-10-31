@@ -33,6 +33,10 @@ data class Alarm(
     // Random group id shared by alarms created together as one manual stack; null for
     // standalone and event-linked alarms.
     val stackId: Long? = null,
+    // Sound played while ringing. [DEFAULT_RINGTONE] follows the default chosen in Settings,
+    // [SILENT_RINGTONE] rings without audio, and anything else is a platform Uri string.
+    // Every alarm of a stack stores the same value.
+    @ColumnInfo(defaultValue = DEFAULT_RINGTONE) val ringtone: String = DEFAULT_RINGTONE,
 ) {
     // Plain alarms ring at the next occurrence of time (today, or tomorrow when it already
     // passed). Dated alarms return that date, even when it is in the past.
@@ -57,5 +61,10 @@ data class Alarm(
         val next = nextFireDateTime(now)
         if (!next.isAfter(now)) return null
         return next.atZone(zone).toInstant().toEpochMilli()
+    }
+
+    companion object {
+        const val DEFAULT_RINGTONE = "default"
+        const val SILENT_RINGTONE = "silent"
     }
 }

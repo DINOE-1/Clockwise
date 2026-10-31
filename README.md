@@ -45,6 +45,8 @@ screenshots for both languages are kept in [`images/en`](images/en) and
 ### Alarms
 
 - One-off alarms and alarms linked to calendar events.
+- Choose a ringtone for each alarm, or silence it; alarms in one stack share a single ringtone.
+  Settings sets the default ringtone for alarms that do not override it.
 - Exact alarms through `AlarmManager`, with a full-screen alarm screen on the lock screen.
 - Stop or snooze from the ringing screen; snooze defaults to 10 minutes.
 - Optional 10-second test alarm and a reliability checklist for notification, exact-alarm,

@@ -13,6 +13,7 @@ import kotlinx.serialization.json.putJsonObject
 object AiTools {
     const val LIST_ALARMS = "list_alarms"
     const val LIST_EVENTS = "list_events"
+    const val LIST_RINGTONES = "list_ringtones"
     const val CREATE_ALARMS = "create_alarms"
     const val CREATE_ALARM_STACKS = "create_alarm_stacks"
     const val CREATE_EVENTS = "create_events"
@@ -30,7 +31,7 @@ object AiTools {
         UPDATE_EVENTS,
         DELETE_EVENTS,
     )
-    val readTools: Set<String> = setOf(LIST_ALARMS, LIST_EVENTS)
+    val readTools: Set<String> = setOf(LIST_ALARMS, LIST_EVENTS, LIST_RINGTONES)
 
     val definitions: JsonArray by lazy {
         buildJsonArray {
@@ -63,6 +64,19 @@ object AiTools {
                                 put("description", "Optional ISO date YYYY-MM-DD")
                             }
                         }
+                        put("additionalProperties", false)
+                    },
+                ),
+            )
+            add(
+                functionTool(
+                    name = LIST_RINGTONES,
+                    description = "List available alarm sounds with titles and uris. Call before " +
+                        "choosing a specific ringtone; pass the uri to create_alarms, " +
+                        "create_alarm_stacks or update_alarms.",
+                    parameters = buildJsonObject {
+                        put("type", "object")
+                        putJsonObject("properties") {}
                         put("additionalProperties", false)
                     },
                 ),
@@ -112,6 +126,14 @@ object AiTools {
                                             put(
                                                 "description",
                                                 "Delete the alarm after it rings; default false",
+                                            )
+                                        }
+                                        putJsonObject("ringtone") {
+                                            put("type", "string")
+                                            put(
+                                                "description",
+                                                "\"default\", \"silent\", or a uri returned " +
+                                                    "by list_ringtones",
                                             )
                                         }
                                         putJsonObject("tags") {
@@ -170,6 +192,14 @@ object AiTools {
                                             put(
                                                 "description",
                                                 "Delete each alarm after it rings; default false",
+                                            )
+                                        }
+                                        putJsonObject("ringtone") {
+                                            put("type", "string")
+                                            put(
+                                                "description",
+                                                "Shared by the whole stack; \"default\", " +
+                                                    "\"silent\", or a uri from list_ringtones",
                                             )
                                         }
                                         putJsonObject("tags") {
@@ -334,6 +364,14 @@ object AiTools {
                                         putJsonObject("oneTime") {
                                             put("type", "boolean")
                                             put("description", "Delete the alarm after it rings")
+                                        }
+                                        putJsonObject("ringtone") {
+                                            put("type", "string")
+                                            put(
+                                                "description",
+                                                "\"default\", \"silent\", or a uri from " +
+                                                    "list_ringtones",
+                                            )
                                         }
                                         putJsonObject("tags") {
                                             put("type", "array")

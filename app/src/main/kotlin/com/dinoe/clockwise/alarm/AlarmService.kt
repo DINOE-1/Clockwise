@@ -46,6 +46,7 @@ class AlarmService : Service() {
         const val EXTRA_NAME = "com.dinoe.clockwise.extra.ALARM_NAME"
         const val EXTRA_NOTE = "com.dinoe.clockwise.extra.ALARM_NOTE"
         const val EXTRA_TIME = "com.dinoe.clockwise.extra.ALARM_TIME"
+        const val EXTRA_RINGTONE = "com.dinoe.clockwise.extra.RINGTONE"
 
         private const val MAX_DURATION_MILLIS = 10 * 60 * 1000L
         private const val TAG = "AlarmService"
@@ -72,6 +73,7 @@ class AlarmService : Service() {
     private var currentName: String = ""
     private var currentNote: String = ""
     private var currentTime: Int = 0
+    private var currentRingtone: String? = null
     private var currentOneShot: Boolean = false
 
     override fun attachBaseContext(newBase: Context) {
@@ -112,6 +114,7 @@ class AlarmService : Service() {
         currentName = intent.getStringExtra(EXTRA_NAME).orEmpty()
         currentNote = intent.getStringExtra(EXTRA_NOTE).orEmpty()
         currentTime = intent.getIntExtra(EXTRA_TIME, 0)
+        currentRingtone = intent.getStringExtra(EXTRA_RINGTONE)
         currentOneShot = intent.getBooleanExtra(AlarmScheduler.EXTRA_ONE_SHOT, false)
 
         _activeAlarmId.value = alarmId
@@ -260,6 +263,7 @@ class AlarmService : Service() {
         currentName = ""
         currentNote = ""
         currentTime = 0
+        currentRingtone = null
         currentOneShot = false
     }
 
@@ -274,6 +278,8 @@ class AlarmService : Service() {
     }
 
     private fun startAudio() {
+        // Resolution happens before focus: a silent alarm must not pause other audio.
+        val requested = alarmSoundUri() ?: return
         val attributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ALARM)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -287,18 +293,24 @@ class AlarmService : Service() {
         audioFocusRequest = focusRequest
         audioManager.requestAudioFocus(focusRequest)
 
-        val uri = alarmSoundUri() ?: return
+        mediaPlayer = playSound(attributes, requested)
+            ?: systemDefaultUri()
+                ?.takeIf { it != requested }
+                ?.let { fallback -> playSound(attributes, fallback) }
+    }
+
+    private fun playSound(attributes: AudioAttributes, uri: Uri): MediaPlayer? {
         val player = MediaPlayer()
-        try {
+        return try {
             player.setAudioAttributes(attributes)
             player.setDataSource(this, uri)
             player.isLooping = true
             player.prepare()
             player.start()
-            mediaPlayer = player
+            player
         } catch (_: Exception) {
             player.release()
-            mediaPlayer = null
+            null
         }
     }
 
@@ -337,7 +349,13 @@ class AlarmService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-    private fun alarmSoundUri(): Uri? =
+    private fun alarmSoundUri(): Uri? = when (val value = currentRingtone) {
+        AlarmSounds.SILENT -> null
+        null, "", AlarmSounds.DEFAULT -> systemDefaultUri()
+        else -> Uri.parse(value)
+    }
+
+    private fun systemDefaultUri(): Uri? =
         Settings.System.DEFAULT_ALARM_ALERT_URI
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             ?: Settings.System.DEFAULT_NOTIFICATION_URI

@@ -70,6 +70,7 @@ class ScheduleWriter(context: Context) {
         enabled: Boolean = true,
         oneTime: Boolean = false,
         tags: List<Tag> = emptyList(),
+        ringtone: String = Alarm.DEFAULT_RINGTONE,
     ): AlarmCreation {
         require(time in 0..86_399) { "Invalid time of day: $time" }
         val selectedTags = tags.take(MAX_TAGS_PER_ITEM)
@@ -84,6 +85,7 @@ class ScheduleWriter(context: Context) {
                     note = note,
                     enabled = enabled,
                     oneTime = oneTime,
+                    ringtone = ringtone,
                 ),
             )
             if (selectedTags.isNotEmpty()) {
@@ -98,6 +100,7 @@ class ScheduleWriter(context: Context) {
                 note = note,
                 enabled = enabled,
                 oneTime = oneTime,
+                ringtone = ringtone,
             )
         }
         return finalizeAlarm(alarm)
@@ -115,6 +118,7 @@ class ScheduleWriter(context: Context) {
         enabled: Boolean = true,
         oneTime: Boolean = false,
         tags: List<Tag> = emptyList(),
+        ringtone: String = Alarm.DEFAULT_RINGTONE,
     ): List<AlarmCreation> {
         require(times.size >= 2) { "An alarm stack needs at least two times" }
         require(times.all { it in 0..86_399 }) { "Invalid time of day: $times" }
@@ -132,6 +136,7 @@ class ScheduleWriter(context: Context) {
                     enabled = enabled,
                     oneTime = oneTime,
                     stackId = stackId,
+                    ringtone = ringtone,
                 )
             }
             val ids = alarmDao.insertAll(drafts)
@@ -275,6 +280,7 @@ class ScheduleWriter(context: Context) {
         enabled: Boolean,
         oneTime: Boolean = alarm.oneTime,
         tags: List<Tag>,
+        ringtone: String = alarm.ringtone,
     ): AlarmCreation {
         require(time in 0..86_399) { "Invalid time of day: $time" }
         val selectedTags = tags.take(MAX_TAGS_PER_ITEM)
@@ -287,10 +293,14 @@ class ScheduleWriter(context: Context) {
                 note = note,
                 enabled = enabled,
                 oneTime = oneTime,
+                ringtone = ringtone,
                 // Editing the alarm invalidates any pending snooze for the old settings.
                 snoozedUntil = null,
             )
             alarmDao.update(row)
+            // A stack rings with one shared sound, so the changed ringtone applies to every
+            // member. Only the edited row loses its snooze; siblings keep theirs.
+            alarm.stackId?.let { stackId -> alarmDao.setStackRingtone(stackId, ringtone) }
             tagDao.clearAlarmTags(alarm.id)
             if (selectedTags.isNotEmpty()) {
                 tagDao.insertAlarmTags(selectedTags.map { AlarmTagCrossRef(alarm.id, it.id) })
@@ -298,6 +308,17 @@ class ScheduleWriter(context: Context) {
             row
         }
         return finalizeAlarm(updated)
+    }
+
+    /**
+     * Changes only the sound, so editing an auto-created alarm's ringtone does not touch its
+     * time, name, snooze, or event link. A stack still shares one ringtone.
+     */
+    suspend fun updateAlarmRingtone(alarm: Alarm, ringtone: String) {
+        database.withTransaction {
+            alarmDao.update(alarm.copy(ringtone = ringtone))
+            alarm.stackId?.let { stackId -> alarmDao.setStackRingtone(stackId, ringtone) }
+        }
     }
 
     suspend fun setAlarmEnabled(alarm: Alarm, enabled: Boolean): AlarmCreation {

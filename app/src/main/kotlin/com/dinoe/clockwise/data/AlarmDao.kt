@@ -56,6 +56,10 @@ interface AlarmDao {
     @Query("UPDATE alarms SET snoozedUntil = NULL WHERE id = :id")
     suspend fun clearSnooze(id: Long)
 
+    // Every alarm of a stack shares one ringtone, so editing one member updates them all.
+    @Query("UPDATE alarms SET ringtone = :ringtone WHERE stackId = :stackId")
+    suspend fun setStackRingtone(stackId: Long, ringtone: String)
+
     // Conditional so a snooze requested at the same moment as the one-shot disable wins.
     @Query(
         "UPDATE alarms SET enabled = 0, snoozedUntil = NULL " +

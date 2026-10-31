@@ -83,6 +83,7 @@ private fun alarmJson(alarm: Alarm): JsonObject = buildJsonObject {
     put("oneTime", alarm.oneTime)
     alarm.snoozedUntil?.let { put("snoozedUntil", it) }
     alarm.stackId?.let { put("stackId", it) }
+    put("ringtone", alarm.ringtone)
 }
 
 private fun tagJson(tag: Tag): JsonObject = buildJsonObject {

@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.dinoe.clockwise.data.Alarm
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -37,6 +38,7 @@ class ThemePreferences(private val context: Context) {
     private val snapIntervalKey = intPreferencesKey("event_snap_interval")
     private val alarmExpandStyleKey = stringPreferencesKey("alarm_expand_style")
     private val timePickerStyleKey = stringPreferencesKey("time_picker_style")
+    private val defaultRingtoneKey = stringPreferencesKey("default_alarm_ringtone")
 
     val mode: Flow<ThemeMode> = context.themeDataStore.data.map { preferences ->
         preferences[themeModeKey]
@@ -59,6 +61,12 @@ class ThemePreferences(private val context: Context) {
         preferences[timePickerStyleKey]
             ?.let { stored -> TimePickerStyle.entries.firstOrNull { it.name == stored } }
             ?: TimePickerStyle.WHEEL
+    }
+
+    // Alarm.DEFAULT_RINGTONE means the platform alarm sound; Alarm.SILENT_RINGTONE means no
+    // audio; anything else is a ringtone Uri string.
+    val defaultRingtone: Flow<String> = context.themeDataStore.data.map { preferences ->
+        preferences[defaultRingtoneKey]?.takeIf { it.isNotBlank() } ?: Alarm.DEFAULT_RINGTONE
     }
 
     suspend fun setMode(mode: ThemeMode) {
@@ -86,6 +94,12 @@ class ThemePreferences(private val context: Context) {
     suspend fun setTimePickerStyle(style: TimePickerStyle) {
         context.themeDataStore.edit { preferences ->
             preferences[timePickerStyleKey] = style.name
+        }
+    }
+
+    suspend fun setDefaultRingtone(value: String) {
+        context.themeDataStore.edit { preferences ->
+            preferences[defaultRingtoneKey] = value
         }
     }
 }

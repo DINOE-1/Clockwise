@@ -68,6 +68,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dinoe.clockwise.R
+import com.dinoe.clockwise.alarm.AlarmSounds
 import com.dinoe.clockwise.ai.AiChatItem
 import com.dinoe.clockwise.ai.AiTokenBudget
 import com.dinoe.clockwise.ai.AlarmDeleteDraft
@@ -838,6 +840,7 @@ private fun ProposalStateLabel(text: String, color: Color) {
 
 @Composable
 private fun AlarmDraftRow(alarm: AlarmDraft, onEdit: (() -> Unit)? = null) {
+    val context = LocalContext.current
     val time = formatTime(alarm.time)
     val whenText = if (alarm.date == null) {
         stringResource(R.string.ai_format_next_time, time)
@@ -864,6 +867,14 @@ private fun AlarmDraftRow(alarm: AlarmDraft, onEdit: (() -> Unit)? = null) {
             val details = listOfNotNull(
                 if (!alarm.enabled) stringResource(R.string.ai_proposal_disabled) else null,
                 if (alarm.oneTime) stringResource(R.string.alarm_one_time_badge) else null,
+                if (alarm.ringtone != AlarmSounds.DEFAULT) {
+                    stringResource(
+                        R.string.ai_proposal_ringtone,
+                        AlarmSounds.name(context, alarm.ringtone),
+                    )
+                } else {
+                    null
+                },
             )
             if (details.isNotEmpty()) {
                 Text(
@@ -898,6 +909,7 @@ private fun AlarmDraftRow(alarm: AlarmDraft, onEdit: (() -> Unit)? = null) {
 
 @Composable
 private fun AlarmStackDraftRow(stack: AlarmStackDraft, onEdit: (() -> Unit)? = null) {
+    val context = LocalContext.current
     val clockFormatter = rememberClockFormatter()
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -924,6 +936,14 @@ private fun AlarmStackDraftRow(stack: AlarmStackDraft, onEdit: (() -> Unit)? = n
                 stringResource(R.string.alarm_stack_count, stack.times.size),
                 if (!stack.enabled) stringResource(R.string.ai_proposal_disabled) else null,
                 if (stack.oneTime) stringResource(R.string.alarm_one_time_badge) else null,
+                if (stack.ringtone != AlarmSounds.DEFAULT) {
+                    stringResource(
+                        R.string.ai_proposal_ringtone,
+                        AlarmSounds.name(context, stack.ringtone),
+                    )
+                } else {
+                    null
+                },
             )
             Text(
                 text = details.joinToString(" · "),
@@ -1056,6 +1076,7 @@ private fun DraftEditButton(onEdit: (() -> Unit)?) {
 
 @Composable
 private fun AlarmUpdateRow(update: AlarmUpdateDraft) {
+    val context = LocalContext.current
     val previousWhen = alarmWhenText(update.previousTime, update.previousFireDate)
     val nextWhen = alarmWhenText(update.time, update.fireDate)
     val previousName = update.previousName.ifBlank {
@@ -1119,6 +1140,17 @@ private fun AlarmUpdateRow(update: AlarmUpdateDraft) {
                     text = stringResource(
                         if (update.oneTime) R.string.ai_proposal_one_time_added
                         else R.string.ai_proposal_one_time_removed,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (update.ringtone != update.previousRingtone) {
+                Text(
+                    text = stringResource(
+                        R.string.ai_proposal_ringtone_change,
+                        AlarmSounds.name(context, update.previousRingtone),
+                        AlarmSounds.name(context, update.ringtone),
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -86,6 +86,16 @@
     <string name="alarm_one_time_label">一次性鬧鐘</string>
     <string name="alarm_one_time_helper">停止響鈴後自動刪除，不會留在鬧鐘列表中。</string>
     <string name="alarm_one_time_badge">一次性</string>
+    <string name="alarm_ringtone_label">鈴聲</string>
+    <string name="alarm_ringtone_stack_hint">堆疊中的所有鬧鐘共用這個鈴聲。</string>
+    <string name="ringtone_default">預設鈴聲</string>
+    <string name="ringtone_silent">靜音</string>
+    <string name="ringtone_system_default">系統預設鬧鐘鈴聲</string>
+    <string name="ringtone_unknown">未知鈴聲</string>
+    <string name="ringtone_reset">改用預設</string>
+    <string name="ringtone_pick_title">選擇鬧鐘鈴聲</string>
+    <string name="settings_default_ringtone_label">預設鬧鐘鈴聲</string>
+    <string name="settings_default_ringtone_helper">新鬧鐘預設使用此鈴聲；個別鬧鐘仍可另外選擇。</string>
     <string name="edit_alarm">編輯鬧鐘</string>
     <string name="delete_alarm">刪除鬧鐘</string>
     <string name="alarm_delete_confirmation">刪除這個鬧鐘？</string>
@@ -251,6 +261,7 @@
     <string name="ai_status_thinking">正在思考…</string>
     <string name="ai_status_reading_alarms">正在讀取鬧鐘…</string>
     <string name="ai_status_reading_events">正在讀取活動…</string>
+    <string name="ai_status_reading_ringtones">正在讀取鈴聲…</string>
     <string name="ai_status_creating">正在套用…</string>
     <string name="ai_status_correcting">正在修正提案…</string>
     <string name="ai_correcting_notice">提案格式有誤，AI 正在修正…</string>
@@ -262,6 +273,8 @@
     <string name="ai_read_alarms_truncated">已讀取 %1$d 個鬧鐘（共 %2$d 個）</string>
     <string name="ai_read_events">已讀取 %1$d 個活動</string>
     <string name="ai_read_events_truncated">已讀取 %1$d 個活動（共 %2$d 個）</string>
+    <string name="ai_read_ringtones">已讀取 %1$d 個鈴聲</string>
+    <string name="ai_read_ringtones_truncated">已讀取 %1$d 個鈴聲（共 %2$d 個）</string>
 
     <string name="ai_proposal_title">準備套用變更</string>
     <string name="ai_proposal_alarms">鬧鐘（%1$d）</string>
@@ -431,6 +444,8 @@
     <string name="ai_proposal_update_summary">修改 %1$d 項</string>
     <string name="ai_proposal_delete_summary">刪除 %1$d 項</string>
     <string name="ai_proposal_alarm_change">%1$s → %2$s</string>
+    <string name="ai_proposal_ringtone">鈴聲：%1$s</string>
+    <string name="ai_proposal_ringtone_change">鈴聲：%1$s → %2$s</string>
     <string name="ai_proposal_scope">套用：%1$s</string>
     <string name="ai_proposal_affected_events">%1$d 個活動</string>
     <string name="ai_proposal_linked_alarms_deleted">一併刪除 %1$d 個鬧鐘</string>

@@ -109,6 +109,31 @@ class AiToolParserUpdateTest {
     }
 
     @Test
+    fun updatesRingtoneAndKeepsItWhenOmitted() {
+        val uri = "content://media/internal/audio/media/28"
+        val parser = AiToolParser(
+            now = now,
+            availableTags = tagMap,
+            alarmsById = alarmsById,
+            availableRingtones = setOf(uri),
+        )
+        val changed = parser.parseAlarmUpdates(
+            """{"alarms":[{"id":10,"ringtone":"$uri"}]}""",
+        ).single()
+        assertEquals(uri, changed.ringtone)
+        assertEquals(Alarm.DEFAULT_RINGTONE, changed.previousRingtone)
+
+        val silent = parser.parseAlarmUpdates(
+            """{"alarms":[{"id":10,"ringtone":"silent"}]}""",
+        ).single()
+        assertEquals(Alarm.SILENT_RINGTONE, silent.ringtone)
+
+        val omitted = parser.parseAlarmUpdates("""{"alarms":[{"id":10,"name":"x"}]}""")
+            .single()
+        assertEquals(Alarm.DEFAULT_RINGTONE, omitted.ringtone)
+    }
+
+    @Test
     fun updatesEventReminderAndCanDisableIt() {
         val enabled = parser.parseEventUpdates(
             """{"events":[{"id":100,"reminderMinutes":10}]}""",

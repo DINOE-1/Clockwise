@@ -272,6 +272,11 @@ class BackupRepository(context: Context) {
             note = obj.optionalString("note").orEmpty(),
             oneTime = obj.optionalBoolean("oneTime") ?: false,
             stackId = obj.optionalLong("stackId"),
+            // Backups written before ringtone support fall back to the default sound.
+            ringtone = obj.optionalString("ringtone")
+                ?.takeIf { it.isNotBlank() }
+                ?.take(MAX_RINGTONE_CHARS)
+                ?: Alarm.DEFAULT_RINGTONE,
         )
     }
 
@@ -342,6 +347,7 @@ class BackupRepository(context: Context) {
 
         private const val TAG = "BackupRepository"
         private const val MAX_EVENT_SECONDS = Event.MAX_EVENT_DAY_SPAN * Event.SECONDS_PER_DAY
+        private const val MAX_RINGTONE_CHARS = 2048
         private val MIN_EPOCH_DAY: Long = LocalDate.of(1900, 1, 1).toEpochDay()
         private val MAX_EPOCH_DAY: Long = LocalDate.of(2200, 12, 31).toEpochDay()
     }

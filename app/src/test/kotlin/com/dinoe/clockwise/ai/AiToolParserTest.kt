@@ -1,5 +1,6 @@
 package com.dinoe.clockwise.ai
 
+import com.dinoe.clockwise.data.Alarm
 import com.dinoe.clockwise.data.Event
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -51,6 +52,52 @@ class AiToolParserTest {
         assertTrue(stack.enabled)
         assertTrue(stack.oneTime)
         assertEquals(listOf("personal"), stack.tags.map { it.name })
+    }
+
+    @Test
+    fun parsesRingtoneChoicesAndDefaultsToTheDefaultSound() {
+        val uri = "content://media/internal/audio/media/28"
+        val parser = AiToolParser(
+            now = now,
+            availableTags = tags,
+            availableRingtones = setOf(uri),
+        )
+        val custom = parser.parseAlarms(
+            """{"alarms":[{"time":"07:00","ringtone":"$uri"}]}""",
+        ).single()
+        assertEquals(uri, custom.ringtone)
+
+        val silent = parser.parseAlarms(
+            """{"alarms":[{"time":"07:00","ringtone":"silent"}]}""",
+        ).single()
+        assertEquals(Alarm.SILENT_RINGTONE, silent.ringtone)
+
+        val omitted = parser.parseAlarms("""{"alarms":[{"time":"07:00"}]}""").single()
+        assertEquals(Alarm.DEFAULT_RINGTONE, omitted.ringtone)
+    }
+
+    @Test
+    fun parsesOneRingtoneSharedByAWholeStack() {
+        val uri = "content://media/internal/audio/media/28"
+        val parser = AiToolParser(
+            now = now,
+            availableTags = tags,
+            availableRingtones = setOf(uri),
+        )
+        val stack = parser.parseAlarmStacks(
+            """{"stacks":[{"times":["07:00","07:10"],"ringtone":"$uri"}]}""",
+        ).single()
+        assertEquals(uri, stack.ringtone)
+    }
+
+    @Test
+    fun rejectsRingtoneThatWasNotOfferedByListRingtones() {
+        val error = expectFailure {
+            parser.parseAlarms(
+                """{"alarms":[{"time":"07:00","ringtone":"content://made/up"}]}""",
+            )
+        }
+        assertEquals("unknown_ringtone", error.code)
     }
 
     @Test

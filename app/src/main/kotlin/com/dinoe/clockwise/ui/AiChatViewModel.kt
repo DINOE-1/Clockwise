@@ -13,6 +13,7 @@ import androidx.room.withTransaction
 import com.dinoe.clockwise.ClockwiseApp
 import com.dinoe.clockwise.R
 import com.dinoe.clockwise.alarm.AlarmScheduler
+import com.dinoe.clockwise.alarm.AlarmSounds
 import com.dinoe.clockwise.alarm.ReminderScheduler
 import com.dinoe.clockwise.ai.AiApiException
 import com.dinoe.clockwise.ai.AiChatItem
@@ -610,6 +611,8 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                 statusText = when (call.name) {
                     AiTools.LIST_ALARMS -> app.getString(R.string.ai_status_reading_alarms)
                     AiTools.LIST_EVENTS -> app.getString(R.string.ai_status_reading_events)
+                    AiTools.LIST_RINGTONES ->
+                        app.getString(R.string.ai_status_reading_ringtones)
                     else -> app.getString(R.string.ai_status_thinking)
                 }
                 val result = executeReadTool(
@@ -716,6 +719,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
             when (call.name) {
                 AiTools.LIST_ALARMS -> readAlarms(tags, maxTokens)
                 AiTools.LIST_EVENTS -> readEvents(call.arguments, tags, maxTokens)
+                AiTools.LIST_RINGTONES -> readRingtones(maxTokens)
                 else -> ReadToolResult(
                     body = errorToolResult("unknown_tool", "Unknown tool ${call.name}"),
                     notice = null,
@@ -772,6 +776,41 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                         putJsonArray("tags") {
                             tagNames[alarm.id].orEmpty().forEach { add(it) }
                         }
+                    },
+                )
+            }
+        }
+    }.toString()
+
+    private fun readRingtones(maxTokens: Int): ReadToolResult {
+        val all = AlarmSounds.available(app)
+        val shown = AiToolPayload.fittingPrefix(all, maxTokens) { candidate ->
+            AiTokenBudget.estimateTokens(ringtonesPayload(all.size, candidate))
+        }
+        val notice = if (all.size > shown.size) {
+            app.getString(R.string.ai_read_ringtones_truncated, shown.size, all.size)
+        } else {
+            app.getString(R.string.ai_read_ringtones, shown.size)
+        }
+        return ReadToolResult(
+            body = ringtonesPayload(all.size, shown),
+            notice = notice,
+            summary = "ringtones (${all.size})",
+        )
+    }
+
+    private fun ringtonesPayload(
+        total: Int,
+        shown: List<Pair<String, String>>,
+    ): String = buildJsonObject {
+        put("total", total)
+        put("truncated", total > shown.size)
+        putJsonArray("ringtones") {
+            shown.forEach { (title, uri) ->
+                add(
+                    buildJsonObject {
+                        put("title", AiTokenBudget.truncateChars(title, 80))
+                        put("uri", uri)
                     },
                 )
             }
@@ -953,6 +992,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             enabled = draft.enabled,
                             oneTime = draft.oneTime,
                             tags = draft.tags.map { Tag(id = it.id, name = it.name) },
+                            ringtone = draft.ringtone,
                         )
                         createdPlainAlarms++
                         if (creation.alarm.enabled) {
@@ -975,6 +1015,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             enabled = draft.enabled,
                             oneTime = draft.oneTime,
                             tags = draft.tags.map { Tag(id = it.id, name = it.name) },
+                            ringtone = draft.ringtone,
                         )
                         createdPlainAlarms += creations.size
                         creations.forEach { creation ->
@@ -1021,6 +1062,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
                             enabled = draft.enabled,
                             oneTime = draft.oneTime,
                             tags = draft.tags.map { Tag(id = it.id, name = it.name) },
+                            ringtone = draft.ringtone,
                         )
                         updatedAlarms++
                         if (creation.alarm.enabled) {
@@ -1218,6 +1260,7 @@ class AiChatViewModel(application: Application) : AndroidViewModel(application) 
             eventsById = rows.eventsById,
             alarmTagsById = rows.alarmTagsById,
             eventTagsById = rows.eventTagsById,
+            availableRingtones = AlarmSounds.available(app).map { it.second }.toSet(),
         )
         val alarms = mutableListOf<AlarmDraft>()
         val alarmStacks = mutableListOf<AlarmStackDraft>()

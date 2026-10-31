@@ -76,6 +76,7 @@ internal fun AlarmDraftEditDialog(
     var note by rememberSaveable { mutableStateOf(draft.note) }
     var enabled by rememberSaveable { mutableStateOf(draft.enabled) }
     var oneTime by rememberSaveable { mutableStateOf(draft.oneTime) }
+    var ringtone by rememberSaveable { mutableStateOf(draft.ringtone) }
     var selectedTagIds by rememberSaveable { mutableStateOf(draft.tags.map { it.id }.toLongArray()) }
     var showTimePicker by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -90,6 +91,7 @@ internal fun AlarmDraftEditDialog(
         enabled = enabled,
         oneTime = oneTime,
         tags = tagRefs(allTags, selectedTagIds),
+        ringtone = ringtone,
     )
     val issue = AiDraftEditor.alarmIssue(current, LocalDateTime.now())
 
@@ -144,6 +146,11 @@ internal fun AlarmDraftEditDialog(
                     label = stringResource(R.string.alarm_one_time_label),
                     checked = oneTime,
                     onCheckedChange = { oneTime = it },
+                )
+                RingtoneSettingRow(
+                    title = stringResource(R.string.alarm_ringtone_label),
+                    value = ringtone,
+                    onValueChange = { ringtone = it },
                 )
                 TagPicker(
                     allTags = allTags,
@@ -201,6 +208,7 @@ internal fun AlarmStackDraftEditDialog(
     var note by rememberSaveable { mutableStateOf(draft.note) }
     var enabled by rememberSaveable { mutableStateOf(draft.enabled) }
     var oneTime by rememberSaveable { mutableStateOf(draft.oneTime) }
+    var ringtone by rememberSaveable { mutableStateOf(draft.ringtone) }
     var selectedTagIds by rememberSaveable { mutableStateOf(draft.tags.map { it.id }.toLongArray()) }
     var editingIndex by remember { mutableStateOf<Int?>(null) }
     var addingTime by remember { mutableStateOf(false) }
@@ -213,6 +221,7 @@ internal fun AlarmStackDraftEditDialog(
         enabled = enabled,
         oneTime = oneTime,
         tags = tagRefs(allTags, selectedTagIds),
+        ringtone = ringtone,
     )
     val issue = AiDraftEditor.stackIssue(current)
 
@@ -279,6 +288,12 @@ internal fun AlarmStackDraftEditDialog(
                     label = stringResource(R.string.alarm_one_time_label),
                     checked = oneTime,
                     onCheckedChange = { oneTime = it },
+                )
+                RingtoneSettingRow(
+                    title = stringResource(R.string.alarm_ringtone_label),
+                    value = ringtone,
+                    supportingText = stringResource(R.string.alarm_ringtone_stack_hint),
+                    onValueChange = { ringtone = it },
                 )
                 TagPicker(
                     allTags = allTags,

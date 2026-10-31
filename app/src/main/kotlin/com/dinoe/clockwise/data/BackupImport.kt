@@ -38,6 +38,7 @@ internal data class BackupAlarm(
     val note: String,
     val oneTime: Boolean,
     val stackId: Long?,
+    val ringtone: String = Alarm.DEFAULT_RINGTONE,
 )
 
 internal data class BackupTag(val id: Long, val name: String, val color: Int)
@@ -122,6 +123,7 @@ internal fun buildBackupImportRows(
             snoozedUntil = null,
             oneTime = row.oneTime,
             stackId = row.stackId,
+            ringtone = row.ringtone,
         )
     }
     val alarmTags = alarmTagRows.map { ref ->

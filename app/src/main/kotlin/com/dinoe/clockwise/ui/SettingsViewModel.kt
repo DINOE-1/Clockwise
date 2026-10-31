@@ -44,6 +44,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             TimePickerStyle.WHEEL,
         )
 
+    val defaultRingtone: StateFlow<String> = preferences.defaultRingtone
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            com.dinoe.clockwise.data.Alarm.DEFAULT_RINGTONE,
+        )
+
     val aiConfig: StateFlow<AiConfig?> = aiRepository.config
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -73,6 +80,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setTimePickerStyle(style: TimePickerStyle) {
         viewModelScope.launch {
             preferences.setTimePickerStyle(style)
+        }
+    }
+
+    fun setDefaultRingtone(value: String) {
+        viewModelScope.launch {
+            preferences.setDefaultRingtone(value)
         }
     }
 }

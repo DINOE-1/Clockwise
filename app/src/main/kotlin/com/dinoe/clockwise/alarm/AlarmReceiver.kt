@@ -39,12 +39,20 @@ class AlarmReceiver : BroadcastReceiver() {
                 // would keep a stale non-null snoozedUntil forever.
                 if (snooze) alarmDao.clearSnooze(alarmId)
 
+                // Resolve "default" here, on the IO thread, so the service can start playback
+                // without reading DataStore on its main thread.
+                val ringtone = AlarmSounds.resolve(
+                    context = appContext,
+                    ringtone = alarm?.ringtone ?: Alarm.DEFAULT_RINGTONE,
+                )
+
                 val started = startAlarmService(
                     context = appContext,
                     alarmId = alarmId,
                     name = name,
                     note = note,
                     time = time,
+                    ringtone = ringtone,
                     oneShot = !test,
                     snooze = snooze,
                 )
@@ -67,6 +75,7 @@ class AlarmReceiver : BroadcastReceiver() {
         name: String,
         note: String,
         time: Int,
+        ringtone: String,
         oneShot: Boolean,
         snooze: Boolean,
     ): Boolean {
@@ -76,6 +85,7 @@ class AlarmReceiver : BroadcastReceiver() {
             putExtra(AlarmService.EXTRA_NAME, name)
             putExtra(AlarmService.EXTRA_NOTE, note)
             putExtra(AlarmService.EXTRA_TIME, time)
+            putExtra(AlarmService.EXTRA_RINGTONE, ringtone)
             putExtra(AlarmScheduler.EXTRA_ONE_SHOT, oneShot)
             putExtra(AlarmScheduler.EXTRA_SNOOZE, snooze)
         }

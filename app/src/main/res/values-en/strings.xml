@@ -86,6 +86,16 @@
     <string name="alarm_one_time_label">One-time alarm</string>
     <string name="alarm_one_time_helper">Deleted automatically after you stop it; it is not kept in the alarm list.</string>
     <string name="alarm_one_time_badge">One-time</string>
+    <string name="alarm_ringtone_label">Ringtone</string>
+    <string name="alarm_ringtone_stack_hint">Every alarm in the stack shares this ringtone.</string>
+    <string name="ringtone_default">Default ringtone</string>
+    <string name="ringtone_silent">Silent</string>
+    <string name="ringtone_system_default">System default alarm sound</string>
+    <string name="ringtone_unknown">Unknown ringtone</string>
+    <string name="ringtone_reset">Use default</string>
+    <string name="ringtone_pick_title">Choose alarm ringtone</string>
+    <string name="settings_default_ringtone_label">Default alarm ringtone</string>
+    <string name="settings_default_ringtone_helper">New alarms use this sound; each alarm can still choose its own.</string>
     <string name="edit_alarm">Edit alarm</string>
     <string name="delete_alarm">Delete alarm</string>
     <string name="alarm_delete_confirmation">Delete this alarm?</string>
@@ -251,6 +261,7 @@
     <string name="ai_status_thinking">Thinking…</string>
     <string name="ai_status_reading_alarms">Reading alarms…</string>
     <string name="ai_status_reading_events">Reading events…</string>
+    <string name="ai_status_reading_ringtones">Reading ringtones…</string>
     <string name="ai_status_creating">Applying…</string>
     <string name="ai_status_correcting">Fixing the proposal…</string>
     <string name="ai_correcting_notice">The proposal had an invalid format. AI is fixing it…</string>
@@ -262,6 +273,8 @@
     <string name="ai_read_alarms_truncated">Read %1$d of %2$d alarms</string>
     <string name="ai_read_events">Read %1$d events</string>
     <string name="ai_read_events_truncated">Read %1$d of %2$d events</string>
+    <string name="ai_read_ringtones">Read %1$d ringtones</string>
+    <string name="ai_read_ringtones_truncated">Read %1$d of %2$d ringtones</string>
 
     <string name="ai_proposal_title">Ready to apply changes</string>
     <string name="ai_proposal_alarms">Alarms (%1$d)</string>
@@ -431,6 +444,8 @@
     <string name="ai_proposal_update_summary">Change %1$d items</string>
     <string name="ai_proposal_delete_summary">Delete %1$d items</string>
     <string name="ai_proposal_alarm_change">%1$s → %2$s</string>
+    <string name="ai_proposal_ringtone">Ringtone: %1$s</string>
+    <string name="ai_proposal_ringtone_change">Ringtone: %1$s → %2$s</string>
     <string name="ai_proposal_scope">Apply: %1$s</string>
     <string name="ai_proposal_affected_events">%1$d events</string>
     <string name="ai_proposal_linked_alarms_deleted">Also delete %1$d alarms</string>

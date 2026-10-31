@@ -85,11 +85,12 @@ class OpenAiChatClientTest {
         )
         assertEquals("low", body["reasoning_effort"]!!.jsonPrimitive.content)
         val tools = body["tools"]!!.jsonArray
-        assertEquals(9, tools.size)
+        assertEquals(10, tools.size)
         assertEquals(
             setOf(
                 AiTools.LIST_ALARMS,
                 AiTools.LIST_EVENTS,
+                AiTools.LIST_RINGTONES,
                 AiTools.CREATE_ALARMS,
                 AiTools.CREATE_ALARM_STACKS,
                 AiTools.CREATE_EVENTS,
@@ -431,7 +432,7 @@ class OpenAiChatClientTest {
             ),
         ).jsonObject
 
-        assertEquals(9, body["tools"]!!.jsonArray.size)
+        assertEquals(10, body["tools"]!!.jsonArray.size)
         assertEquals("auto", body["tool_choice"]!!.jsonPrimitive.content)
         assertEquals(512, body["max_tokens"]!!.jsonPrimitive.int)
         val messages = body["messages"]!!.jsonArray.map { it.jsonObject }

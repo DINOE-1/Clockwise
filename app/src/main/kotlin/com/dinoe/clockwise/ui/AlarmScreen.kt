@@ -483,8 +483,8 @@ fun AlarmScreen(
             allTags = allTags,
             timePickerStyle = timePickerStyle,
             onDismiss = { showAddDialog = false },
-            onSave = { seconds, name, note, oneTime, tags ->
-                viewModel.addAlarm(seconds, name, note, oneTime, tags)
+            onSave = { seconds, name, note, oneTime, ringtone, tags ->
+                viewModel.addAlarm(seconds, name, note, oneTime, ringtone, tags)
                 showAddDialog = false
                 showSavedNotice(true, ringCountdown(Alarm(time = seconds)))
                 if (!permissionStatus.notificationsGranted) {
@@ -499,8 +499,8 @@ fun AlarmScreen(
             allTags = allTags,
             timePickerStyle = timePickerStyle,
             onDismiss = { showAddStackDialog = false },
-            onSave = { times, name, note, oneTime, tags ->
-                viewModel.addAlarmStack(times, name, note, oneTime, tags)
+            onSave = { times, name, note, oneTime, ringtone, tags ->
+                viewModel.addAlarmStack(times, name, note, oneTime, ringtone, tags)
                 showAddStackDialog = false
                 showNotice(resources.getString(R.string.alarm_stack_saved, times.size))
                 if (!permissionStatus.notificationsGranted) {
@@ -517,8 +517,16 @@ fun AlarmScreen(
             initialTags = alarmTagMap[alarm.id].orEmpty(),
             timePickerStyle = timePickerStyle,
             onDismiss = { alarmToEdit = null },
-            onSave = { seconds, name, note, oneTime, tags ->
-                viewModel.updateAlarmDetails(alarm, seconds, name, note, oneTime, tags)
+            onSave = { seconds, name, note, oneTime, ringtone, tags ->
+                viewModel.updateAlarmDetails(
+                    alarm,
+                    seconds,
+                    name,
+                    note,
+                    oneTime,
+                    ringtone,
+                    tags,
+                )
                 alarmToEdit = null
                 showSavedNotice(
                     alarm.enabled,
@@ -529,6 +537,7 @@ fun AlarmScreen(
     }
 
     alarmToView?.let { alarm ->
+        var viewedRingtone by remember(alarm.id) { mutableStateOf(alarm.ringtone) }
         AlertDialog(
             onDismissRequest = { alarmToView = null },
             title = { Text(alarm.name.ifBlank { stringResource(R.string.alarm_title) }) },
@@ -558,6 +567,19 @@ fun AlarmScreen(
                         )
                     }
                     TagPills(tags = alarmTagMap[alarm.id].orEmpty())
+                    RingtoneSettingRow(
+                        title = stringResource(R.string.alarm_ringtone_label),
+                        value = viewedRingtone,
+                        supportingText = if (alarm.stackId != null) {
+                            stringResource(R.string.alarm_ringtone_stack_hint)
+                        } else {
+                            null
+                        },
+                        onValueChange = { value ->
+                            viewedRingtone = value
+                            viewModel.setRingtone(alarm, value)
+                        },
+                    )
                     Text(
                         text = stringResource(R.string.alarm_auto_hint),
                         style = MaterialTheme.typography.bodySmall,
@@ -943,12 +965,13 @@ private fun AddAlarmDialog(
     allTags: List<Tag>,
     timePickerStyle: TimePickerStyle,
     onDismiss: () -> Unit,
-    onSave: (Int, String, String, Boolean, List<Tag>) -> Unit,
+    onSave: (Int, String, String, Boolean, String, List<Tag>) -> Unit,
 ) {
     var secondsOfDay by rememberSaveable { mutableIntStateOf(defaultAlarmTime()) }
     var name by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
     var oneTime by rememberSaveable { mutableStateOf(false) }
+    var ringtone by rememberSaveable { mutableStateOf(Alarm.DEFAULT_RINGTONE) }
     var selectedTagIds by rememberSaveable { mutableStateOf(longArrayOf()) }
     var showTimePicker by remember { mutableStateOf(false) }
 
@@ -996,6 +1019,11 @@ private fun AddAlarmDialog(
                     checked = oneTime,
                     onCheckedChange = { oneTime = it },
                 )
+                RingtoneSettingRow(
+                    title = stringResource(R.string.alarm_ringtone_label),
+                    value = ringtone,
+                    onValueChange = { ringtone = it },
+                )
                 TagPicker(
                     allTags = allTags,
                     selectedTags = selectedTags,
@@ -1015,6 +1043,7 @@ private fun AddAlarmDialog(
                                 name.trim(),
                                 note.trim(),
                                 oneTime,
+                                ringtone,
                                 selectedTags,
                             )
                         },
@@ -1045,12 +1074,13 @@ private fun AddAlarmStackDialog(
     allTags: List<Tag>,
     timePickerStyle: TimePickerStyle,
     onDismiss: () -> Unit,
-    onSave: (List<Int>, String, String, Boolean, List<Tag>) -> Unit,
+    onSave: (List<Int>, String, String, Boolean, String, List<Tag>) -> Unit,
 ) {
     var times by rememberSaveable { mutableStateOf(listOf(defaultAlarmTime())) }
     var name by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
     var oneTime by rememberSaveable { mutableStateOf(false) }
+    var ringtone by rememberSaveable { mutableStateOf(Alarm.DEFAULT_RINGTONE) }
     var selectedTagIds by rememberSaveable { mutableStateOf(longArrayOf()) }
     var timePickerIndex by remember { mutableStateOf<Int?>(null) }
 
@@ -1149,6 +1179,12 @@ private fun AddAlarmStackDialog(
                     checked = oneTime,
                     onCheckedChange = { oneTime = it },
                 )
+                RingtoneSettingRow(
+                    title = stringResource(R.string.alarm_ringtone_label),
+                    value = ringtone,
+                    supportingText = stringResource(R.string.alarm_ringtone_stack_hint),
+                    onValueChange = { ringtone = it },
+                )
                 TagPicker(
                     allTags = allTags,
                     selectedTags = selectedTags,
@@ -1169,6 +1205,7 @@ private fun AddAlarmStackDialog(
                                 name.trim(),
                                 note.trim(),
                                 oneTime,
+                                ringtone,
                                 selectedTags,
                             )
                         },
@@ -1202,12 +1239,13 @@ private fun EditAlarmDialog(
     initialTags: List<Tag>,
     timePickerStyle: TimePickerStyle,
     onDismiss: () -> Unit,
-    onSave: (Int, String, String, Boolean, List<Tag>) -> Unit,
+    onSave: (Int, String, String, Boolean, String, List<Tag>) -> Unit,
 ) {
     var secondsOfDay by rememberSaveable(alarm.id) { mutableIntStateOf(alarm.time) }
     var name by rememberSaveable(alarm.id) { mutableStateOf(alarm.name) }
     var note by rememberSaveable(alarm.id) { mutableStateOf(alarm.note) }
     var oneTime by rememberSaveable(alarm.id) { mutableStateOf(alarm.oneTime) }
+    var ringtone by rememberSaveable(alarm.id) { mutableStateOf(alarm.ringtone) }
     var selectedTagIds by rememberSaveable(alarm.id) {
         mutableStateOf(initialTags.map { it.id }.toLongArray())
     }
@@ -1257,6 +1295,16 @@ private fun EditAlarmDialog(
                     checked = oneTime,
                     onCheckedChange = { oneTime = it },
                 )
+                RingtoneSettingRow(
+                    title = stringResource(R.string.alarm_ringtone_label),
+                    value = ringtone,
+                    supportingText = if (alarm.stackId != null) {
+                        stringResource(R.string.alarm_ringtone_stack_hint)
+                    } else {
+                        null
+                    },
+                    onValueChange = { ringtone = it },
+                )
                 TagPicker(
                     allTags = allTags,
                     selectedTags = selectedTags,
@@ -1276,6 +1324,7 @@ private fun EditAlarmDialog(
                                 name.trim(),
                                 note.trim(),
                                 oneTime,
+                                ringtone,
                                 selectedTags,
                             )
                         },

@@ -16,6 +16,7 @@ class AiToolsTest {
             setOf(
                 AiTools.LIST_ALARMS,
                 AiTools.LIST_EVENTS,
+                AiTools.LIST_RINGTONES,
                 AiTools.CREATE_ALARMS,
                 AiTools.CREATE_ALARM_STACKS,
                 AiTools.CREATE_EVENTS,
@@ -26,7 +27,7 @@ class AiToolsTest {
             ),
             names.toSet(),
         )
-        assertEquals(9, names.size)
+        assertEquals(10, names.size)
     }
 
     @Test
