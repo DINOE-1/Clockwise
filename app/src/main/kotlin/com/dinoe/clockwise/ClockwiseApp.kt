@@ -6,6 +6,7 @@ import com.dinoe.clockwise.alarm.AlarmNotifier
 import com.dinoe.clockwise.alarm.ReminderNotifier
 import com.dinoe.clockwise.alarm.ReminderRestorationCoordinator
 import com.dinoe.clockwise.alarm.ReminderScheduler
+import com.dinoe.clockwise.bridge.BridgeService
 import com.dinoe.clockwise.data.AppDatabase
 import com.dinoe.clockwise.data.ScheduleWriter
 import kotlinx.coroutines.CoroutineScope
@@ -39,6 +40,7 @@ class ClockwiseApp : Application() {
         super.onCreate()
         AlarmNotifier.createChannel(this)
         ReminderNotifier.createChannel(this)
+        BridgeService.createChannel(this)
         // Do not reschedule alarms here. A process can start because an alarm is firing; doing a
         // restore at that moment races the receiver and can disable the alarm that is about to
         // ring. BootReceiver handles boot, package updates, and clock/time-zone changes instead.

@@ -298,6 +298,8 @@ fun SettingsScreen(
                 )
             }
 
+            SettingsBridgeSection(viewModel)
+
             SettingsBackupSection()
 
             Spacer(modifier = Modifier.height(16.dp))

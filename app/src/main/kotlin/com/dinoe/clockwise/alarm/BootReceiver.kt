@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.dinoe.clockwise.ClockwiseApp
+import com.dinoe.clockwise.bridge.BridgeController
 import kotlinx.coroutines.launch
 
 /**
@@ -31,6 +32,13 @@ class BootReceiver : BroadcastReceiver() {
                 }
                 app.reminderRestoration.restore(trigger).onFailure { error ->
                     Log.e(TAG, "Unable to restore event reminders for $action", error)
+                }
+                // Boot and package replacement are foreground-service start exemptions, so the
+                // agent bridge can restart here; other actions (clock/time-zone changes) arrive
+                // from the background and must not attempt a service start.
+                if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+                    runCatching { BridgeController.startIfEnabled(app) }
+                        .onFailure { error -> Log.e(TAG, "Unable to restart the agent bridge", error) }
                 }
             } finally {
                 pendingResult.finish()

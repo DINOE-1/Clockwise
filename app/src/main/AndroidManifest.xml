@@ -53,6 +53,15 @@
                 android:value="alarm" />
         </service>
 
+        <service
+            android:name=".bridge.BridgeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="calendar-bridge" />
+        </service>
+
         <receiver
             android:name=".alarm.AlarmReceiver"
             android:exported="false" />

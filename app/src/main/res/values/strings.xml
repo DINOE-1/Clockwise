@@ -517,4 +517,30 @@
     <string name="onboarding_sample_tag_work">工作</string>
     <string name="onboarding_sample_tag_personal">個人</string>
     <string name="onboarding_sample_tag_birthday">生日</string>
+
+    <string name="settings_section_agent_access">Agent 連線</string>
+    <string name="agent_bridge_enable_title">啟用 Agent 連線</string>
+    <string name="agent_bridge_enable_helper">讓同一網路上的 Clockwise agent 以唯讀方式讀取行程、鬧鐘與標籤</string>
+    <string name="agent_bridge_status_running">執行中</string>
+    <string name="agent_bridge_status_stopped">已停止</string>
+    <string name="agent_bridge_status_error">錯誤：%1$s</string>
+    <string name="agent_bridge_port_title">連接埠</string>
+    <string name="agent_bridge_port_dialog_title">連接埠（1024–65535）</string>
+    <string name="agent_bridge_port_invalid">連接埠必須在 1024 到 65535 之間</string>
+    <string name="agent_bridge_token_title">存取權杖</string>
+    <string name="agent_bridge_token_hidden">••••••••••••••••</string>
+    <string name="agent_bridge_token_show">顯示</string>
+    <string name="agent_bridge_token_hide">隱藏</string>
+    <string name="agent_bridge_token_copy">複製</string>
+    <string name="agent_bridge_token_rotate">重新產生</string>
+    <string name="agent_bridge_token_copied">已複製存取權杖</string>
+    <string name="agent_bridge_token_rotated">已重新產生存取權杖</string>
+    <string name="agent_bridge_address_title">連線位址</string>
+    <string name="agent_bridge_address_none">找不到區網 IP，請確認 Wi-Fi 已連線</string>
+    <string name="agent_bridge_warning">同一網路上任何拿到權杖的人都能讀取你的行事曆。在區網外建議改用 Tailscale。</string>
+    <string name="agent_bridge_channel_name">Agent 連線</string>
+    <string name="agent_bridge_channel_description">提供 Clockwise agent 的唯讀 HTTP 連線</string>
+    <string name="agent_bridge_notification_title">Agent 連線執行中</string>
+    <string name="agent_bridge_notification_text">連接埠 %1$d · 唯讀</string>
+    <string name="agent_bridge_notification_stop">停止</string>
 </resources>

@@ -517,4 +517,30 @@
     <string name="onboarding_sample_tag_work">Work</string>
     <string name="onboarding_sample_tag_personal">Personal</string>
     <string name="onboarding_sample_tag_birthday">Birthday</string>
+
+    <string name="settings_section_agent_access">Agent Access</string>
+    <string name="agent_bridge_enable_title">Enable agent access</string>
+    <string name="agent_bridge_enable_helper">Let the Clockwise agent on the same network read your events, alarms, and tags (read-only)</string>
+    <string name="agent_bridge_status_running">Running</string>
+    <string name="agent_bridge_status_stopped">Stopped</string>
+    <string name="agent_bridge_status_error">Error: %1$s</string>
+    <string name="agent_bridge_port_title">Port</string>
+    <string name="agent_bridge_port_dialog_title">Port (1024–65535)</string>
+    <string name="agent_bridge_port_invalid">The port must be between 1024 and 65535</string>
+    <string name="agent_bridge_token_title">Access token</string>
+    <string name="agent_bridge_token_hidden">••••••••••••••••</string>
+    <string name="agent_bridge_token_show">Show</string>
+    <string name="agent_bridge_token_hide">Hide</string>
+    <string name="agent_bridge_token_copy">Copy</string>
+    <string name="agent_bridge_token_rotate">Regenerate</string>
+    <string name="agent_bridge_token_copied">Access token copied</string>
+    <string name="agent_bridge_token_rotated">Access token regenerated</string>
+    <string name="agent_bridge_address_title">Address</string>
+    <string name="agent_bridge_address_none">No LAN IP found; check that Wi-Fi is connected</string>
+    <string name="agent_bridge_warning">Anyone on the same network who has the token can read your calendar. Use Tailscale outside your LAN.</string>
+    <string name="agent_bridge_channel_name">Agent access</string>
+    <string name="agent_bridge_channel_description">Read-only HTTP access for the Clockwise agent</string>
+    <string name="agent_bridge_notification_title">Agent access running</string>
+    <string name="agent_bridge_notification_text">Port %1$d · read-only</string>
+    <string name="agent_bridge_notification_stop">Stop</string>
 </resources>

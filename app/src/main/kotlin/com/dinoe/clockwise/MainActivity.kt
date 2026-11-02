@@ -13,6 +13,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import com.dinoe.clockwise.bridge.BridgeController
 import com.dinoe.clockwise.ui.ApplySystemBarStyle
 import com.dinoe.clockwise.ui.ClockwiseTheme
 import com.dinoe.clockwise.ui.MainScreen
@@ -21,6 +23,7 @@ import com.dinoe.clockwise.ui.OnboardingScreen
 import com.dinoe.clockwise.ui.ThemeMode
 import com.dinoe.clockwise.ui.ThemePreferences
 import com.dinoe.clockwise.ui.withAppLocale
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var openEventId by mutableStateOf<Long?>(null)
@@ -38,6 +41,11 @@ class MainActivity : ComponentActivity() {
         )
         val themePreferences = ThemePreferences(applicationContext)
         val onboardingPreferences = OnboardingPreferences(applicationContext)
+        // The app is now visible, so a foreground-service start is allowed: bring the agent bridge
+        // back if the user enabled it and the system stopped the process.
+        lifecycleScope.launch {
+            runCatching { BridgeController.startIfEnabled(applicationContext) }
+        }
         setContent {
             // Start with the platform theme so the first frame never blocks on DataStore.
             val themeMode by themePreferences.mode.collectAsStateWithLifecycle(

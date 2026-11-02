@@ -1,10 +1,16 @@
 package com.dinoe.clockwise.ui
 
 import android.app.Application
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dinoe.clockwise.ClockwiseApp
 import com.dinoe.clockwise.ai.AiConfig
+import com.dinoe.clockwise.bridge.BridgeConfig
+import com.dinoe.clockwise.bridge.BridgeController
+import com.dinoe.clockwise.bridge.BridgePreferences
+import com.dinoe.clockwise.bridge.BridgeService
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -16,6 +22,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val preferences = ThemePreferences(application)
     private val languagePreferences = LanguagePreferences(application)
     private val aiRepository = (application as ClockwiseApp).aiRepository
+    private val bridgePreferences = BridgePreferences(application)
 
     private val _language = MutableStateFlow(languagePreferences.language)
     val language: StateFlow<AppLanguage> = _language.asStateFlow()
@@ -54,6 +61,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val aiConfig: StateFlow<AiConfig?> = aiRepository.config
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val bridgeConfig: StateFlow<BridgeConfig> = bridgePreferences.config
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BridgeConfig())
+
+    val bridgeRunning: StateFlow<Boolean> = BridgeController.running
+
+    val bridgeError: StateFlow<String?> = BridgeController.lastError
+
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
             preferences.setMode(mode)
@@ -86,6 +100,37 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setDefaultRingtone(value: String) {
         viewModelScope.launch {
             preferences.setDefaultRingtone(value)
+        }
+    }
+
+    fun setBridgeEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            bridgePreferences.setEnabled(enabled)
+            val app = getApplication<Application>()
+            if (enabled) {
+                BridgeController.startIfEnabled(app)
+            } else {
+                app.stopService(Intent(app, BridgeService::class.java))
+            }
+        }
+    }
+
+    fun setBridgePort(port: Int) {
+        viewModelScope.launch {
+            bridgePreferences.setPort(port)
+            // The server bound the old port; restart the service so the new one takes effect.
+            if (BridgeController.running.value) {
+                val app = getApplication<Application>()
+                app.stopService(Intent(app, BridgeService::class.java))
+                delay(500)
+                BridgeController.startIfEnabled(app)
+            }
+        }
+    }
+
+    fun rotateBridgeToken() {
+        viewModelScope.launch {
+            bridgePreferences.rotateToken()
         }
     }
 }
